@@ -1,0 +1,22 @@
+[Unit]
+Description=Mark the Open-PC One A/B slot as good after a successful boot
+Documentation=https://github.com/hamishfromatech/open-pc-one
+# systemd-boot boot counting: an update entry is installed as
+# `openpc+b+3.conf`. Each failed boot decrements the counter; at 0 the entry is
+# removed and the previous slot boots. Reaching this unit means userspace came
+# up, so the slot is blessed and the counter is cleared.
+DefaultDependencies=yes
+After=openpc.target multi-user.target
+Requires=openpc.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# `-` because the command is a no-op (and exits non-zero) when the entry was not
+# installed with a boot counter; that must not stop the flag below.
+ExecStart=-/usr/bin/systemd-bless-boot good
+# The LED leaves BOOTING on this file.
+ExecStartPost=/usr/bin/touch /run/openpc/boot-complete
+
+[Install]
+WantedBy=openpc.target

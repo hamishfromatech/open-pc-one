@@ -1,0 +1,10 @@
+[Unit]
+Description=Open-PC One appliance target
+Documentation=https://github.com/hamishfromatech/open-pc-one
+Requires=openpc-led.service
+# Pull in the base system, then order after it: the image's default.target is a
+# symlink to this unit, so it must not also be WantedBy=multi-user.target (that
+# would be an ordering cycle systemd has to break).
+Wants=multi-user.target openpc-provision.service openpc-session.service llama.service openpc-speech.service cua-driver.service openpc-engine.service
+After=multi-user.target
+AllowIsolate=yes

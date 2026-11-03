@@ -1,0 +1,39 @@
+[Unit]
+Description=Open-PC One BLE WiFi provisioning (first boot, no keyboard)
+Documentation=https://github.com/hamishfromatech/open-pc-one
+After=bluetooth.target network.target
+Wants=bluetooth.target
+# This service is what brings WiFi up, so it must precede network-online.
+# An Ethernet cable makes it return 0 immediately: that is the zero-setup
+# fallback. Nothing gates on it, so the box is never held hostage by a phone
+# that never arrives.
+Before=network-online.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=openpc
+Group=openpc
+# BlueZ D-Bus access for the GATT peripheral, NetworkManager for the join.
+SupplementaryGroups=bluetooth
+Environment=HOME=/home/openpc
+StateDirectory=openpc
+StateDirectoryMode=0700
+RuntimeDirectory=openpc
+ExecStart=/opt/openpc/venv/bin/openpc-provision --interface wlan0 --cert /var/lib/openpc/tls/engine.crt --devices /var/lib/openpc/devices.json
+Restart=on-failure
+RestartSec=5
+# Never spin forever on a radio fault; the LED goes amber and a human looks.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/openpc /run/openpc /etc/NetworkManager/system-connections /etc/avahi/services
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_BLUETOOTH
+# D-Bus system socket plus its peers.
+PrivateNetwork=no
+
+[Install]
+WantedBy=openpc.target

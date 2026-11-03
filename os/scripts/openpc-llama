@@ -1,0 +1,32 @@
+#!/bin/bash
+# Exec llama-server with the argv rendered from /etc/openpc/models.json.
+#
+# The unit file deliberately names no model, no quant and no context length: a
+# model swap must be a manifest change, never an edit to a systemd unit. The
+# renderer writes one argument per line, so an argument containing spaces stays
+# one argument.
+set -euo pipefail
+
+ARGS_FILE="${OPENPC_LLAMA_ARGS:-/etc/openpc/llama.args}"
+LLAMA_BIN="${OPENPC_LLAMA_BIN:-/opt/openpc/llama.cpp/llama-server}"
+
+if [ ! -s "$ARGS_FILE" ]; then
+  echo "openpc-llama: missing or empty $ARGS_FILE (the image should have rendered it from models.json)" >&2
+  exit 78   # EX_CONFIG
+fi
+if [ ! -x "$LLAMA_BIN" ]; then
+  echo "openpc-llama: $LLAMA_BIN is not executable (pinned llama.cpp artefact missing)" >&2
+  exit 78
+fi
+
+ARGS=()
+while IFS= read -r line; do
+  [ -n "$line" ] && ARGS+=("$line")
+done <"$ARGS_FILE"
+
+[ "${#ARGS[@]}" -gt 0 ] || {
+  echo "openpc-llama: $ARGS_FILE contains no arguments" >&2
+  exit 78
+}
+
+exec "$LLAMA_BIN" "${ARGS[@]}"

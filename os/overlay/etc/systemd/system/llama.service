@@ -1,0 +1,37 @@
+[Unit]
+Description=Open-PC One local LLM (llama.cpp; model and context come from /etc/openpc/models.json)
+Documentation=https://github.com/hamishfromatech/open-pc-one
+After=openpc-session.service
+Wants=openpc-session.service
+# The engine asks get_available_models at first connect. Starting llama first is
+# what makes that answer honest instead of empty.
+Before=openpc-engine.service
+
+[Service]
+Type=simple
+User=openpc
+Group=openpc
+Environment=LLAMA_CACHE=/var/lib/openpc/llama-cache
+# No model, quant or context length is named here on purpose. The image renders
+# /etc/openpc/llama.args from the model manifest at build time; this launcher
+# execs llama-server with that argv. Swapping models is a manifest change, never
+# an edit to this unit.
+ExecStart=/opt/openpc/bin/openpc-llama
+Restart=always
+RestartSec=3
+# Prefill on this box is the bottleneck (a cold 131k prompt is 44-109 minutes of
+# CPU). Never let a wedged server hold the port: kill it and let systemd retry.
+TimeoutStartSec=120
+KillMode=mixed
+CPUWeight=200
+MemoryMax=5G
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/openpc/models /var/lib/openpc/llama-cache
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=openpc.target

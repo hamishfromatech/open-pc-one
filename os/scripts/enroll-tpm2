@@ -1,0 +1,26 @@
+#!/bin/bash
+# Bind the root LUKS volume to the TPM2 chip so the box boots unattended, and
+# print a recovery key exactly once for the operator to store offline.
+#
+# Usage: enroll-tpm2.sh [/dev/nvme0n1p3]
+set -euo pipefail
+
+DEVICE="${1:?usage: enroll-tpm2.sh <luks device>}"
+[ -b "$DEVICE" ] || { echo "not a block device: $DEVICE" >&2; exit 1; }
+
+# PCR 0 (firmware) and PCR 7 (Secure Boot state). Deliberately NOT PCR 9/12:
+# those change when a kernel or initrd moves, which would make a normal OTA
+# update fail to unlock and require physical recovery.
+echo "Enrolling $DEVICE against TPM2 (PCRs 0+7)..."
+systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=0+7 "$DEVICE"
+
+# A recovery key is not optional: a firmware update or a cleared TPM bricks an
+# appliance with no recovery key and no console.
+echo
+echo "Generating a recovery key. Store this offline now; it is shown once."
+systemd-cryptenroll --recovery-key "$DEVICE"
+
+echo
+echo "Verify before rebooting:"
+echo "  cryptsetup luksDump $DEVICE | grep -E 'Tokens|Systemd-TPM2|Recovery'"
+echo "  systemd-cryptsetup attach test $DEVICE - tpm2-device=auto && echo unlock-ok && umount /dev/mapper/test"

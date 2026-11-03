@@ -1,0 +1,14 @@
+.git
+.venv
+.devstate
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.DS_Store
+docs
+docs-internal
+os/image/wheels
+os/image/artifacts
+os/image/*.raw
+os/image/*.erofs

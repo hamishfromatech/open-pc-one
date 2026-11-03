@@ -1,0 +1,125 @@
+#!/bin/bash
+# mkosi post-install: identity, code, pinned artefacts, service enablement.
+set -euo pipefail
+
+BUILDROOT="${BUILDROOT:?mkosi must set BUILDROOT}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
+
+say() { printf 'postinst: %s\n' "$*"; }
+die() { printf 'postinst: ERROR: %s\n' "$*" >&2; exit 1; }
+
+# --------------------------------------------------------------------------
+# The agent's user. No shell, no password, no SSH: the only way in is the
+# engine's WSS edge with a paired device key.
+# --------------------------------------------------------------------------
+if ! grep -q '^openpc:' "$BUILDROOT/etc/passwd"; then
+  useradd --root "$BUILDROOT" --create-home --shell /usr/sbin/nologin \
+    --groups bluetooth,video,render --comment "Open-PC agent" openpc
+fi
+passwd --root "$BUILDROOT" --lock openpc >/dev/null 2>&1 || true
+
+# --------------------------------------------------------------------------
+# Our code, into a venv that nothing else can modify.
+# --------------------------------------------------------------------------
+install -d "$BUILDROOT/opt/openpc/bin" "$BUILDROOT/opt/openpc/venv"
+
+# Licence and notice travel with the image. Internal engineering docs do not:
+# they are not part of the published tree and must not be baked into a unit
+# that leaves the building.
+install -d "$BUILDROOT/usr/share/doc/openpc"
+install -m 0644 "$REPO/LICENSE" "$REPO/NOTICE" "$BUILDROOT/usr/share/doc/openpc/"
+
+"$BUILDROOT/usr/bin/python3" -m venv "$BUILDROOT/opt/openpc/venv"
+PIP="$BUILDROOT/opt/openpc/venv/bin/pip"
+"$PIP" install --no-index --find-links "$REPO/os/image/wheels" \
+  openpc-engine openpc-provisioning openpc-led \
+  || die "wheelhouse missing; run 'make wheels' on the build host first"
+
+for script in openpc-session ota-update enroll-tpm2 read-only-root; do
+  install -m 0755 "$REPO/os/scripts/$script" "$BUILDROOT/opt/openpc/bin/$script"
+done
+
+# --------------------------------------------------------------------------
+# Local model. config/models.json is the only place a model is named; the image
+# renders it into the files the services read. The licence gate runs here too,
+# against the target the build script recorded, so invoking mkosi directly still
+# cannot ship a model whose licence is unverified on a retail target.
+# --------------------------------------------------------------------------
+BUILD_TARGET="$(cat "$REPO/os/image/build-target" 2>/dev/null || echo dev)"
+case "$BUILD_TARGET" in dev|pilot|retail) ;; *) die "invalid recorded build target: $BUILD_TARGET" ;; esac
+MANIFEST="${OPENPC_MODEL_MANIFEST:-$REPO/config/models.json}"
+"$REPO/os/scripts/model-config" check --target "$BUILD_TARGET" --manifest "$MANIFEST"
+install -d "$BUILDROOT/etc/openpc"
+"$REPO/os/scripts/model-config" render --out "$BUILDROOT/etc/openpc" --manifest "$MANIFEST"
+printf '%s\n' "$BUILD_TARGET" >"$BUILDROOT/etc/openpc/build-target"
+install -m 0755 "$REPO/os/scripts/model-config" "$BUILDROOT/opt/openpc/bin/model-config"
+install -m 0755 "$REPO/os/scripts/openpc-llama" "$BUILDROOT/opt/openpc/bin/openpc-llama"
+
+# --------------------------------------------------------------------------
+# Pinned native artefacts. The image refuses to build without them: an
+# unattended appliance must never boot a binary whose hash nobody checked.
+# --------------------------------------------------------------------------
+ARTIFACTS="$REPO/os/image/artifacts"
+[ -f "$ARTIFACTS/SHA256SUMS" ] || die "os/image/artifacts/SHA256SUMS is missing"
+(cd "$ARTIFACTS" && sha256sum -c SHA256SUMS --quiet) || die "artefact checksum mismatch"
+
+# cua-driver does not ship bundled; it is baked here so resolution never fails.
+install -d "$BUILDROOT/opt/openpc/bin"
+install -m 0755 "$ARTIFACTS/cua-driver" "$BUILDROOT/opt/openpc/bin/cua-driver"
+
+# llama.cpp with the architecture the active model needs. The tarball name comes
+# from the manifest, so this stays correct when the model changes.
+LLAMA_ARTIFACT="$("$REPO/os/scripts/model-config" artifacts)" || die "cannot resolve the llama.cpp artefact name"
+install -d "$BUILDROOT/opt/openpc/llama.cpp"
+tar -xzf "$ARTIFACTS/$LLAMA_ARTIFACT" -C "$BUILDROOT/opt/openpc/llama.cpp" --strip-components=1
+install -m 0755 "$ARTIFACTS/a-coder-cli" "$BUILDROOT/opt/openpc/bin/a-coder-cli"
+
+# --------------------------------------------------------------------------
+# No console. No getty. No root password. This is an appliance.
+# --------------------------------------------------------------------------
+for tty in 1 2 3 4 5 6; do
+  ln -sf /dev/null "$BUILDROOT/etc/systemd/system/getty@tty$tty.service"
+done
+ln -sf /dev/null "$BUILDROOT/etc/systemd/system/serial-getty@ttyS0.service"
+passwd --root "$BUILDROOT" --lock root >/dev/null 2>&1 || true
+
+# SSH is LAN-only (see nftables) and key-only.
+cat > "$BUILDROOT/etc/ssh/sshd_config.d/openpc.conf" <<'EOF'
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+AllowAgentForwarding no
+X11Forwarding no
+EOF
+
+# --------------------------------------------------------------------------
+# Services. openpc.target is the appliance: everything hangs off it, so
+# `systemctl isolate openpc.target` is also a hard reset of the agent stack.
+# --------------------------------------------------------------------------
+UNITDIR="$BUILDROOT/etc/systemd/system"
+WANTS="$UNITDIR/openpc.target.wants"
+install -d "$WANTS"
+for unit in openpc-led openpc-provision openpc-session llama openpc-speech cua-driver openpc-engine openpc-bless; do
+  ln -sf "/etc/systemd/system/$unit.service" "$WANTS/$unit.service"
+done
+ln -sf /etc/systemd/system/run-openpc-chrome.mount "$WANTS/run-openpc-chrome.mount"
+ln -sf /etc/systemd/system/openpc.target "$BUILDROOT/etc/systemd/system/default.target"
+
+# --------------------------------------------------------------------------
+# Read-only root, watchdog, journald budget.
+# --------------------------------------------------------------------------
+"$BUILDROOT/opt/openpc/bin/read-only-root" "$BUILDROOT" || true
+
+install -d "$BUILDROOT/etc/systemd/system.conf.d"
+cat > "$BUILDROOT/etc/systemd/system.conf.d/openpc.conf" <<'EOF'
+# Hardware watchdog. If PID 1 stops petting it the box reboots itself, which is
+# the only recovery available when nobody is standing next to it.
+RuntimeWatchdogSec=30s
+RebootWatchdogSec=2min
+# Do not wait five minutes for a failed mount on an appliance with no console.
+DefaultTimeoutStartSec=45s
+DefaultTimeoutStopSec=30s
+EOF
+
+say "image assembled"

@@ -1,0 +1,86 @@
+#!/bin/bash
+# Pin the native artefacts that are baked into the appliance image.
+#
+# The image build refuses to run without a SHA256SUMS file that matches every
+# artefact (os/image/mkosi.postinst and os/scripts/build-image both verify it).
+# This script is the only supported way to produce that file, so it can enforce
+# the two rules the README got wrong: every required artefact must be present,
+# and SHA256SUMS must never list itself.
+#
+# Usage:
+#   ./os/scripts/pin-artifacts [--check] [ARTIFACT_DIR]
+#
+#   (no flag)  write ARTIFACT_DIR/SHA256SUMS from the files on disk
+#   --check    verify ARTIFACT_DIR/SHA256SUMS against the files, write nothing
+#
+# ARTIFACT_DIR defaults to os/image/artifacts.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
+
+MODE="pin"
+if [ "${1:-}" = "--check" ]; then
+  MODE="check"
+  shift
+fi
+ARTIFACTS="${1:-$REPO/os/image/artifacts}"
+
+die() { echo "pin-artifacts: $*" >&2; exit 1; }
+
+hash_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    # macOS / BSD build hosts
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+# Exact filenames the image installs. The llama.cpp artefact comes from the
+# model manifest (config/models.json -> llamaCpp.artifact), so swapping models
+# does not leave a stale hardcoded tarball name here and in postinst.
+LLAMA_ARTIFACT="$(python3 "$HERE/model-config" artifacts)" \
+  || die "cannot read the model manifest (os/scripts/model-config artifacts)"
+REQUIRED=(
+  "cua-driver"
+  "a-coder-cli"
+  "$LLAMA_ARTIFACT"
+)
+
+[ -d "$ARTIFACTS" ] || die "no such artefact directory: $ARTIFACTS"
+missing=()
+for name in "${REQUIRED[@]}"; do
+  [ -s "$ARTIFACTS/$name" ] || missing+=("$name")
+done
+if [ "${#missing[@]}" -gt 0 ]; then
+  die "missing or empty artefact(s) in $ARTIFACTS: ${missing[*]}"
+fi
+
+if [ "$MODE" = "check" ]; then
+  [ -f "$ARTIFACTS/SHA256SUMS" ] || die "$ARTIFACTS/SHA256SUMS does not exist; run pin-artifacts to create it"
+  # Compare with hash_file rather than `sha256sum -c` so a macOS build host can
+  # run the check too (the image build itself is Linux-only).
+  bad=()
+  while read -r expected name; do
+    [ -n "$name" ] || continue
+    actual="$(hash_file "$ARTIFACTS/$name")"
+    [ "$actual" = "$expected" ] || bad+=("$name")
+  done <"$ARTIFACTS/SHA256SUMS"
+  if [ "${#bad[@]}" -gt 0 ]; then
+    die "artefact checksum mismatch: ${bad[*]}"
+  fi
+  echo "ok: ${#REQUIRED[@]} artefacts verified in $ARTIFACTS"
+  exit 0
+fi
+
+tmp="$(mktemp "$ARTIFACTS/.SHA256SUMS.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
+for name in "${REQUIRED[@]}"; do
+  printf '%s  %s\n' "$(hash_file "$ARTIFACTS/$name")" "$name" >>"$tmp"
+done
+mv "$tmp" "$ARTIFACTS/SHA256SUMS"
+trap - EXIT
+
+echo "wrote $ARTIFACTS/SHA256SUMS"
+cat "$ARTIFACTS/SHA256SUMS"

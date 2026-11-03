@@ -1,0 +1,262 @@
+#!/usr/bin/env python3
+"""The model layer's one entry point: validate, gate, render.
+
+    model-config check --target retail|pilot|dev [--manifest PATH]
+    model-config render --out DIR [--manifest PATH]
+    model-config artifacts [--manifest PATH]
+    model-config show [--manifest PATH]
+
+``check`` is the licence gate. A ``retail`` build whose active model is not
+``verified`` exits 2 and prints the reason; ``dev`` and ``pilot`` proceed with a
+warning. ``render`` writes the files the appliance actually reads
+(``/etc/openpc/llama.args``, ``/etc/openpc/model.json`` and a copy of the
+manifest) so no unit file or service has to name a model.
+
+Deliberately standalone (stdlib only, Python 3.8+): this runs on the build host
+before mkosi, inside mkosi's postinst, and on a macOS dev machine in tests.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+
+SCHEMA = "openpc.models/1"
+BUILD_TARGETS = ("dev", "pilot", "retail")
+LICENCE_STATUSES = ("verified", "unverified")
+REPO = Path(__file__).resolve().parents[2]
+MODEL_DIR = "/var/lib/openpc/models"
+
+
+class ManifestError(ValueError):
+    pass
+
+
+def _require(obj, key, context):
+    value = obj.get(key)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise ManifestError(f"{context}: missing required field {key!r}")
+    return value
+
+
+def _string(obj, key, context):
+    value = _require(obj, key, context)
+    if not isinstance(value, str):
+        raise ManifestError(f"{context}: {key!r} must be a string")
+    return value.strip()
+
+
+def resolve_manifest(explicit):
+    if explicit:
+        return Path(explicit)
+    env = os.environ.get("OPENPC_MODEL_MANIFEST")
+    if env:
+        return Path(env)
+    installed = Path("/etc/openpc/models.json")
+    if installed.exists():
+        return installed
+    return REPO / "config" / "models.json"
+
+
+def parse_model(key, raw):
+    context = f"model {key!r}"
+    if not isinstance(raw, dict):
+        raise ManifestError(f"{context}: must be an object")
+
+    filename = _string(raw, "file", context)
+    if Path(filename).name != filename or filename in {".", ".."}:
+        raise ManifestError(f"{context}: 'file' must be a bare filename, not a path ({filename!r})")
+
+    context_length = _require(raw, "contextLength", context)
+    if isinstance(context_length, bool) or not isinstance(context_length, int) or context_length <= 0:
+        raise ManifestError(f"{context}: 'contextLength' must be a positive integer")
+
+    licence = _require(raw, "licence", context)
+    if not isinstance(licence, dict):
+        raise ManifestError(f"{context}: 'licence' must be an object")
+    status = _string(licence, "status", f"{context} licence")
+    if status not in LICENCE_STATUSES:
+        raise ManifestError(
+            f"{context}: licence.status must be one of {', '.join(LICENCE_STATUSES)}, not {status!r}"
+        )
+
+    llama = _require(raw, "llamaCpp", context)
+    if not isinstance(llama, dict):
+        raise ManifestError(f"{context}: 'llamaCpp' must be an object")
+    args = llama.get("args", [])
+    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        raise ManifestError(f"{context}: llamaCpp.args must be a list of strings")
+    if any(not arg for arg in args):
+        raise ManifestError(f"{context}: llamaCpp.args cannot contain an empty argument")
+
+    return {
+        "key": key,
+        "displayName": _string(raw, "displayName", context),
+        "repoId": _string(raw, "repoId", context),
+        "quant": _string(raw, "quant", context),
+        "file": filename,
+        "contextLength": context_length,
+        "licence": {
+            "id": _string(licence, "id", f"{context} licence"),
+            "status": status,
+            "url": str(licence.get("url", "")).strip(),
+        },
+        "llamaCpp": {
+            "architecture": _string(llama, "architecture", f"{context} llamaCpp"),
+            "artifact": _string(llama, "artifact", f"{context} llamaCpp"),
+            "args": list(args),
+        },
+    }
+
+
+def load(path):
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ManifestError(f"model manifest not found: {path}")
+    except json.JSONDecodeError as exc:
+        raise ManifestError(f"{path}: invalid JSON ({exc})")
+
+    if not isinstance(data, dict):
+        raise ManifestError(f"{path}: top level must be an object")
+    if data.get("schema") != SCHEMA:
+        raise ManifestError(f"{path}: unsupported schema {data.get('schema')!r} (expected {SCHEMA!r})")
+
+    models_raw = _require(data, "models", str(path))
+    if not isinstance(models_raw, dict) or not models_raw:
+        raise ManifestError(f"{path}: 'models' must be a non-empty object")
+    models = {key: parse_model(key, raw) for key, raw in models_raw.items()}
+
+    active_key = _string(data, "active", str(path))
+    if active_key not in models:
+        raise ManifestError(f"{path}: active model {active_key!r} is not declared in 'models'")
+    return Path(path), models[active_key], models
+
+
+def public_model(model):
+    return {
+        "id": model["key"],
+        "displayName": model["displayName"],
+        "repoId": model["repoId"],
+        "quant": model["quant"],
+        "contextLength": model["contextLength"],
+        "licence": model["licence"],
+    }
+
+
+def cmd_check(args):
+    path, model, _ = load(resolve_manifest(args.manifest))
+    licence = model["licence"]
+    if args.target == "retail" and licence["status"] != "verified":
+        print(
+            f"REFUSING retail build: model {model['key']!r} ({model['repoId']}) has "
+            f"licence.status={licence['status']!r} ({licence['id']}).",
+            file=sys.stderr,
+        )
+        print(
+            "  A retail image may only ship a model whose licence has been verified.",
+            file=sys.stderr,
+        )
+        print(
+            f"  Fix: obtain written terms and set licence.status to \"verified\" in {path},",
+            file=sys.stderr,
+        )
+        print("       or build a non-retail image (--target dev|pilot).", file=sys.stderr)
+        return 2
+
+    verdict = "ok"
+    if licence["status"] != "verified":
+        verdict = "proceeds (non-retail)"
+        print(
+            f"WARNING: {args.target} build with licence_status={licence['status']!r} "
+            f"({licence['id']}); this image must not be sold.",
+            file=sys.stderr,
+        )
+    print(
+        f"licence gate: target={args.target} model={model['key']} "
+        f"licence={licence['status']} -> {verdict}"
+    )
+    return 0
+
+
+def cmd_render(args):
+    path, model, _ = load(resolve_manifest(args.manifest))
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # 1. The manifest itself, so the built image's claim and its config agree.
+    shutil.copyfile(path, out / "models.json")
+
+    # 2. llama-server argv, one argument per line. A launcher reads this into an
+    #    array - no shell word splitting, and no model name in the unit file.
+    argv = ["--model", f"{MODEL_DIR}/{model['file']}", *model["llamaCpp"]["args"]]
+    (out / "llama.args").write_text("\n".join(argv) + "\n", encoding="utf-8")
+
+    # 3. Client-facing model summary (also what host_hello carries at runtime).
+    (out / "model.json").write_text(
+        json.dumps(public_model(model), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    print(
+        f"rendered {model['key']} ({model['quant']}, ctx {model['contextLength']}) "
+        f"to {out}: models.json, llama.args, model.json"
+    )
+    return 0
+
+
+def cmd_artifacts(args):
+    _, model, _ = load(resolve_manifest(args.manifest))
+    print(model["llamaCpp"]["artifact"])
+    return 0
+
+
+def cmd_show(args):
+    path, model, models = load(resolve_manifest(args.manifest))
+    print(f"manifest       {path}")
+    print(f"active         {model['key']}")
+    print(f"repo           {model['repoId']}")
+    print(f"quant/file     {model['quant']}  {model['file']}")
+    print(f"context        {model['contextLength']}")
+    print(f"licence        {model['licence']['status']} ({model['licence']['id']})")
+    print(f"llama.cpp      arch={model['llamaCpp']['architecture']} artifact={model['llamaCpp']['artifact']}")
+    print(f"declared       {', '.join(sorted(models))}")
+    return 0
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="model-config", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--manifest", default=None, help="manifest path (default: $OPENPC_MODEL_MANIFEST, /etc/openpc/models.json, config/models.json)")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    check = sub.add_parser("check", help="fail closed on an unverified licence for a retail build")
+    check.add_argument("--target", required=True, choices=BUILD_TARGETS)
+    check.set_defaults(func=cmd_check)
+
+    render = sub.add_parser("render", help="write the files the appliance reads")
+    render.add_argument("--out", required=True, help="output directory (e.g. /etc/openpc)")
+    render.set_defaults(func=cmd_render)
+
+    artifacts = sub.add_parser("artifacts", help="print the llama.cpp artefact filename")
+    artifacts.set_defaults(func=cmd_artifacts)
+
+    show = sub.add_parser("show", help="print the resolved active model")
+    show.set_defaults(func=cmd_show)
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except ManifestError as exc:
+        print(f"model-config: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

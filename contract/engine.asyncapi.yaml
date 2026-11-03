@@ -1,0 +1,312 @@
+asyncapi: 3.0.0
+info:
+  title: Open-PC One engine edge
+  version: 1.0.0
+  description: |
+    The WebSocket contract between a client (Tauri desktop, Flutter mobile) and
+    openpc-engine on :8095, which bridges to `a-coder-cli --mode rpc`.
+
+    Every frame is a single JSON object sent as one WebSocket text message.
+    Do not send JSONL over the socket: one message is one frame.
+
+    Ordering: `hostSeq` is the client's cursor. Ignore any engine frame whose
+    `hostSeq` is at or below the `boundary` of the `host_hello` you are holding.
+
+    `success: true` on a response means the command was *accepted*. Completion
+    arrives as events, never as a second response.
+
+    Why AsyncAPI and not OpenAPI: OpenAPI cannot describe a WebSocket frame
+    protocol. The existing Open-PC dashboard already has an `openapi.json` for
+    its REST surface; that remains the REST contract for the agent server.
+  license:
+    name: MIT
+servers:
+  appliance:
+    host: '{host}:8095'
+    pathname: /v1/rpc
+    protocol: wss
+    description: |
+      TLS 1.3, self-signed certificate. The client MUST pin the SHA-256 of the
+      DER certificate learned over BLE during provisioning (`certFingerprint` in
+      the device-info characteristic). Resolve the host with mDNS
+      `_openpc._tcp`.
+    variables:
+      host:
+        default: openpc.local
+    security:
+      - $ref: '#/components/securitySchemes/deviceSignature'
+channels:
+  edge:
+    address: /
+    description: The single bidirectional channel; the first frames are a handshake.
+    messages:
+      hostChallenge:
+        $ref: '#/components/messages/hostChallenge'
+      auth:
+        $ref: '#/components/messages/auth'
+      pair:
+        $ref: '#/components/messages/pair'
+      authOk:
+        $ref: '#/components/messages/authOk'
+      hostError:
+        $ref: '#/components/messages/hostError'
+      subscribe:
+        $ref: '#/components/messages/subscribe'
+      hostHello:
+        $ref: '#/components/messages/hostHello'
+      hostResyncRequired:
+        $ref: '#/components/messages/hostResyncRequired'
+      command:
+        $ref: '#/components/messages/command'
+      response:
+        $ref: '#/components/messages/response'
+      engineEvent:
+        $ref: '#/components/messages/engineEvent'
+operations:
+  authenticate:
+    action: receive
+    channel:
+      $ref: '#/channels/edge'
+    summary: Server issues a single-use nonce before anything else.
+    messages:
+      - $ref: '#/channels/edge/messages/hostChallenge'
+  presentCredentials:
+    action: send
+    channel:
+      $ref: '#/channels/edge'
+    summary: Sign the nonce with the device key, or redeem a pairing code.
+    messages:
+      - $ref: '#/channels/edge/messages/auth'
+      - $ref: '#/channels/edge/messages/pair'
+  subscribeSession:
+    action: send
+    channel:
+      $ref: '#/channels/edge'
+    summary: Attach to a session and receive a replay snapshot.
+    messages:
+      - $ref: '#/channels/edge/messages/subscribe'
+  driveTheAgent:
+    action: send
+    channel:
+      $ref: '#/channels/edge'
+    summary: Any RPC command, forwarded verbatim (prompt, abort, set_model, ...).
+    messages:
+      - $ref: '#/channels/edge/messages/command'
+components:
+  securitySchemes:
+    deviceSignature:
+      type: userPassword
+      description: |
+        Ed25519 challenge-response: sign the UTF-8 bytes of
+        `openpc-auth-v1:<nonce>` and send base64. Nonces are single use and
+        expire after 30 seconds. The public key is registered during BLE
+        provisioning or by redeeming a one-time pairing code.
+  messages:
+    hostChallenge:
+      name: host_challenge
+      payload:
+        type: object
+        required: [type, protocol, nonce, expiresAt, appliance]
+        properties:
+          type: { const: host_challenge }
+          protocol: { type: integer, const: 1 }
+          nonce: { type: string, description: base64url, single use }
+          expiresAt: { type: number, description: unix seconds }
+          appliance:
+            type: object
+            required: [id, name, certFingerprint]
+            properties:
+              id: { type: string }
+              name: { type: string, examples: [Open-PC One] }
+              certFingerprint: { type: string, description: lowercase hex SHA-256 of the DER certificate }
+    auth:
+      name: auth
+      payload:
+        type: object
+        required: [type, deviceId, nonce, signature]
+        properties:
+          type: { const: auth }
+          deviceId: { type: string }
+          nonce: { type: string }
+          signature: { type: string, description: base64 Ed25519 over `openpc-auth-v1:<nonce>` }
+    pair:
+      name: pair
+      payload:
+        type: object
+        required: [type, code, deviceId, publicKey]
+        properties:
+          type: { const: pair }
+          code: { type: string, description: 8 chars, no O/0/I/1/L, single use, TTL 600s }
+          deviceId: { type: string, pattern: '^[A-Za-z0-9._:-]{1,64}$' }
+          name: { type: string }
+          publicKey: { type: string, description: base64 raw 32-byte Ed25519 public key }
+          kind: { type: string, enum: [desktop, mobile], default: desktop }
+    authOk:
+      name: auth_ok
+      payload:
+        type: object
+        required: [type, protocol, deviceId, applianceId, serverTime]
+        properties:
+          type: { const: auth_ok }
+          protocol: { type: integer, const: 1 }
+          deviceId: { type: string }
+          applianceId: { type: string }
+          serverTime: { type: number }
+          sessions: { type: array, items: { $ref: '#/components/schemas/sessionInfo' } }
+    subscribe:
+      name: subscribe
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type: { const: subscribe }
+          sessionId: { type: string, default: main, pattern: '^[A-Za-z0-9._-]{1,64}$' }
+    hostHello:
+      name: host_hello
+      description: |
+        Replay snapshot. Render these messages, then apply live frames whose
+        `hostSeq` is greater than `boundary`.
+      payload:
+        type: object
+        required: [type, sessionId, state, messages, boundary]
+        properties:
+          type: { const: host_hello }
+          resync: { type: boolean, default: false }
+          sessionId: { type: string }
+          state: { $ref: '#/components/schemas/sessionState' }
+          stats: { type: object, description: get_session_stats data, e.g. contextUsage }
+          messages: { type: array, items: { type: object, description: AgentMessage } }
+          messageTotal: { type: integer }
+          messageStart: { type: integer, description: pass as `before` to get_messages for older history }
+          hasMore: { type: boolean }
+          boundary: { type: integer, description: highest hostSeq already reflected in `messages` }
+          engine: { type: object, description: engine_info frame }
+          sessions: { type: array, items: { $ref: '#/components/schemas/sessionInfo' } }
+          localModel:
+            $ref: '#/components/schemas/localModel'
+            description: |
+              The model the image is configured to run, from the model manifest.
+              This is declared configuration, not discovery: `get_available_models`
+              and `get_llama_cpp_status` remain the runtime truth. A mismatch
+              means the image and the running llama.cpp disagree.
+    hostResyncRequired:
+      name: host_resync_required
+      description: |
+        Emitted once when the client's queue overflowed. The engine takes a fresh
+        snapshot automatically and sends `host_hello {resync: true}`; clients may
+        also send an explicit `resync`.
+      payload:
+        type: object
+        required: [type, reason]
+        properties:
+          type: { const: host_resync_required }
+          reason: { type: string, examples: [backpressure] }
+    command:
+      name: command
+      description: |
+        Any a-coder-cli RPC command: prompt, steer, follow_up, abort,
+        clear_queue, get_state, get_messages, set_model, set_permission_mode,
+        set_plan_mode, get_available_models, extension_ui_response, ...
+        Forwarded verbatim; keep your own `id` for correlation.
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type: { type: string, examples: [prompt] }
+          id: { type: string, description: echoed back on the response }
+          message: { type: string, description: prompt/steer/follow_up }
+          sessionId: { type: string, description: optional override of the subscribed session }
+    response:
+      name: response
+      description: |
+        The engine's answer to a command. `success: true` means accepted, not
+        finished: post-acceptance failures arrive as events.
+      payload:
+        type: object
+        required: [type, command, success]
+        properties:
+          type: { const: response }
+          id: { type: string }
+          command: { type: string }
+          success: { type: boolean }
+          data: { type: object }
+          error: { type: string }
+          code: { type: string }
+    engineEvent:
+      name: engine_event
+      description: |
+        An a-coder-cli event forwarded verbatim plus `sessionId`, `hostSeq` and
+        `engineSeq`. Types include agent_start, agent_end, message_start,
+        message_update, message_end, tool_start, tool_end, queue_update,
+        session_start, compaction_start/end. `engineSeq` restarts when the child
+        respawns; `hostSeq` does not.
+      payload:
+        type: object
+        required: [type, sessionId, hostSeq]
+        properties:
+          type: { type: string, examples: [message_update] }
+          sessionId: { type: string }
+          hostSeq: { type: integer }
+          engineSeq: { type: integer }
+    hostError:
+      name: host_error
+      payload:
+        type: object
+        required: [type, code, message]
+        properties:
+          type: { const: host_error }
+          code:
+            type: string
+            enum:
+              - auth_required
+              - auth_failed
+              - pair_failed
+              - not_subscribed
+              - bad_frame
+              - bad_session_id
+              - engine_down
+              - engine_error
+              - already_authenticated
+              - internal_error
+          message: { type: string }
+          id: { type: string }
+  schemas:
+    localModel:
+      type: object
+      required: [id, displayName, repoId, quant, contextLength, licence]
+      properties:
+        id: { type: string, examples: [lfm3-1.7b] }
+        displayName: { type: string, examples: [LFM3-1.7B] }
+        repoId: { type: string, examples: [LiquidAI/LFM3-1.7B-GGUF] }
+        quant: { type: string, examples: [Q4_K_M] }
+        contextLength: { type: integer, examples: [262144] }
+        licence:
+          type: object
+          required: [id, status]
+          properties:
+            id: { type: string, examples: [LFM Open License 1.0] }
+            status: { type: string, enum: [verified, unverified] }
+            url: { type: string }
+    sessionInfo:
+      type: object
+      properties:
+        sessionId: { type: string }
+        alive: { type: boolean }
+        streaming: { type: boolean }
+        clients: { type: integer }
+        hostSeq: { type: integer }
+    sessionState:
+      type: object
+      properties:
+        sessionId: { type: string }
+        sessionFile: { type: string }
+        cwd: { type: string }
+        isStreaming: { type: boolean }
+        isCompacting: { type: boolean }
+        model: { type: object }
+        thinkingLevel: { type: string }
+        permissionMode: { type: string }
+        planMode: { type: boolean }
+        messageCount: { type: integer }
+        pendingMessageCount: { type: integer }
+        activationId: { type: integer }

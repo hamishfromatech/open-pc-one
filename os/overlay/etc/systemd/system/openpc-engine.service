@@ -1,0 +1,49 @@
+[Unit]
+Description=Open-PC One engine bridge (a-coder-cli RPC <-> WSS :8095)
+Documentation=https://github.com/hamishfromatech/open-pc-one
+# Order is the contract: session -> llama -> speech -> cua-driver -> engine.
+# llama is last-but-one so get_available_models is truthful on first connect.
+# Order is the contract: session -> llama -> speech -> cua-driver -> engine.
+# The session already pulls in network-online, so the engine inherits it without
+# ever waiting on a phone that has not arrived yet.
+After=openpc-session.service llama.service openpc-speech.service cua-driver.service
+Wants=llama.service
+Requires=openpc-session.service
+
+[Service]
+Type=simple
+User=openpc
+Group=openpc
+Environment=HOME=/home/openpc
+Environment=OPENPC_ENGINE_COMMAND=/opt/openpc/bin/a-coder-cli
+Environment=OPENPC_IDLE_TIMEOUT=1800
+Environment=OPENPC_STATE_DIR=/var/lib/openpc
+# The model is configuration. The engine only reads it to report what the box
+# is supposed to be running (host_hello.localModel, doctor).
+Environment=OPENPC_MODEL_MANIFEST=/etc/openpc/models.json
+Environment=RUST_LOG=warn
+# The binary is the venv entry point; the code is pinned in the image.
+ExecStart=/opt/openpc/venv/bin/openpc-engine --state-dir /var/lib/openpc serve --bind 0.0.0.0:8095 --agent-cwd /home/openpc
+Restart=always
+RestartSec=3
+# Give an in-flight turn time to finish before SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+# A turn can legitimately use a lot of memory on a 256k context.
+MemoryMax=6G
+# systemd creates and owns these, so the unit does not need to run as root.
+StateDirectory=openpc
+StateDirectoryMode=0700
+RuntimeDirectory=openpc
+RuntimeDirectoryMode=0700
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/openpc /run/openpc /home/openpc/Desktop /home/openpc/Documents
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# Local only: llama, speech and cua-driver all live on 127.0.0.1.
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=openpc.target

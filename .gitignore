@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.devstate/
+*.egg-info/
+build/
+dist/
+os/image/wheels/
+os/image/artifacts/*
+!os/image/artifacts/SHA256SUMS
+os/image/build-target
+os/image/*.raw
+os/image/*.erofs
+.DS_Store
+
+# Internal engineering documentation and commercial material. The public tree
+# is code only: no docs/ directory is published. These live here so a stray
+# `git add -A` cannot put them in a commit; scripts/check_public_tree.py and CI
+# enforce the same rule from the other direction.
+docs/
+docs-internal/
+*bom*
+*supplier*
+*pricing*
+*teardown*

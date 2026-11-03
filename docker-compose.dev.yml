@@ -1,0 +1,48 @@
+name: open-pc-one-dev
+
+# Development only. No Bluetooth, no WiFi, no root, no appliance hardware:
+# the engine supervises the protocol-faithful fake child, and :8090 is a
+# generated stand-in for the real desktop stream.
+services:
+  engine:
+    build: .
+    image: open-pc-one-dev
+    command:
+      - python
+      - -m
+      - openpc_engine
+      - --state-dir
+      - /state
+      - --log-format
+      - text
+      - serve
+      - --bind
+      - 0.0.0.0:8095
+      - --engine-command
+      - python /app/services/engine/tests/fake_engine.py
+      - --agent-cwd
+      - /state/agent
+    ports:
+      - "8095:8095"
+    volumes:
+      - openpc-state:/state
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8095), 2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  mjpeg:
+    build: .
+    image: open-pc-one-dev
+    command: ["python", "/app/dev/mjpeg_standin.py", "--bind", "0.0.0.0:8090"]
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+volumes:
+  openpc-state:

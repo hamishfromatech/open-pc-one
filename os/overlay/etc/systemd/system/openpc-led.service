@@ -1,0 +1,27 @@
+[Unit]
+Description=Open-PC One status LED (the only local UI)
+Documentation=https://github.com/hamishfromatech/open-pc-one
+# Start as early as possible: a box that boots to a dark power button looks
+# dead. The service tolerates every other unit being absent.
+After=local-fs.target
+Before=openpc-session.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/opt/openpc/venv/bin/openpc-led --led-name openpc:status --run-dir /run/openpc
+Restart=always
+RestartSec=1
+# The loop writes sysfs 20 times a second; it must not be a CPU hog.
+Nice=10
+CPUQuota=20%
+MemoryMax=64M
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/run/openpc /sys/class/leds
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=openpc.target

@@ -1,0 +1,44 @@
+[Unit]
+Description=Open-PC One desktop session (Xvfb + XFCE + Chrome)
+Documentation=https://github.com/hamishfromatech/open-pc-one
+# A cold boot must have a routable link before the session starts: the agent
+# drives Chrome, and Chrome blocks forever on a captive portal with no DNS.
+After=network-online.target
+Wants=network-online.target
+# Never start the session twice (Xvfb :0 is exclusive).
+Conflicts=openpc-session-restart.service
+
+[Service]
+Type=simple
+User=openpc
+Group=openpc
+Environment=DISPLAY=:0
+Environment=HOME=/home/openpc
+# Chrome's profile and cache live on tmpfs: the root filesystem is read-only and
+# a browser writes thousands of small files an hour.
+Environment=XDG_CACHE_HOME=/run/openpc/chrome/cache
+Environment=XDG_CONFIG_HOME=/run/openpc/chrome/config
+RuntimeDirectory=openpc/chrome
+RuntimeDirectoryMode=0700
+ExecStart=/opt/openpc/bin/openpc-session
+Restart=always
+RestartSec=2
+# Xvfb + XFCE + Chrome is a browser session on a 6 W box; cap it so the agent
+# cannot starve llama.cpp of cores.
+CPUQuota=250%
+MemoryMax=3G
+TasksMax=512
+# No new privileges, and only the paths a browser legitimately needs.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/openpc /home/openpc/Desktop /home/openpc/Documents
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=openpc.target

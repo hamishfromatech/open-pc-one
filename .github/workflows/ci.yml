@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  public-tree:
+    name: public tree has no internal material
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: check the tree
+        run: python3 scripts/check_public_tree.py
+
+  tests:
+    name: tests in the dev container
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: build the dev image
+        run: docker build --tag open-pc-one-dev .
+      - name: run the suite inside the container
+        run: docker run --rm open-pc-one-dev make test PYTHON=python3

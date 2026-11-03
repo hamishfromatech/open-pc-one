@@ -1,0 +1,32 @@
+#!/bin/bash
+# Convert the root filesystem to read-only using an overlayfs upper layer.
+#
+# An appliance is powered off at the wall. A read-only root means a power cut
+# can never leave a half-written library or systemd unit behind. Writable
+# state lives in /var, /run and the Chrome profile on tmpfs - all of which are
+# either disposable or on their own partition.
+#
+# Run once during image build (mkosi.postinst), not at boot.
+set -euo pipefail
+
+ROOT_MOUNT="${1:-/}"
+UPPER=/var/lib/overlay/upper
+WORK=/var/lib/overlay/work
+
+mkdir -p "$UPPER" "$WORK"
+
+# /etc/machine-id must be stable across boots: the appliance identity (BLE name,
+# session dirs, device registry) derives from it. Regenerating it every boot
+# would orphan every paired phone.
+rm -f /etc/machine-id
+systemd-machine-id-setup
+cp /etc/machine-id /var/lib/openpc/machine-id 2>/dev/null || true
+
+# Bind the writable parts back over the read-only root.
+for path in /var/lib/openpc /etc/NetworkManager/system-connections /etc/avahi/services /etc/systemd/system; do
+  mkdir -p "$path"
+done
+
+# fstab entries for the overlay are installed by the image, not written here.
+echo "read-only root prepared: upper=$UPPER work=$WORK"
+echo "verify after reboot with: findmnt / && touch /etc/probe (must fail)"

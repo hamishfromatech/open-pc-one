@@ -1,0 +1,32 @@
+{
+  "schema": "openpc.models/1",
+  "active": "lfm3-1.7b",
+  "models": {
+    "lfm3-1.7b": {
+      "displayName": "LFM3-1.7B",
+      "repoId": "LiquidAI/LFM3-1.7B-GGUF",
+      "quant": "Q4_K_M",
+      "file": "LFM3-1.7B-Q4_K_M.gguf",
+      "contextLength": 262144,
+      "licence": {
+        "id": "LFM Open License 1.0",
+        "status": "unverified",
+        "url": "https://huggingface.co/LiquidAI/LFM3-1.7B-GGUF"
+      },
+      "llamaCpp": {
+        "architecture": "lfm3",
+        "artifact": "llama.cpp-lfm3.tar.gz",
+        "args": [
+          "--host", "127.0.0.1",
+          "--port", "8080",
+          "--ctx-size", "262144",
+          "--flash-attn",
+          "--cache-type-k", "q8_0",
+          "--cache-type-v", "q8_0",
+          "--threads", "4",
+          "--parallel", "1"
+        ]
+      }
+    }
+  }
+}

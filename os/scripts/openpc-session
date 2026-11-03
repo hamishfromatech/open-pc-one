@@ -1,0 +1,82 @@
+#!/bin/bash
+# Start the headless desktop: Xvfb + XFCE + Chrome.
+#
+# There is no monitor. Xvfb is the only display, and Chrome is what the agent
+# actually drives. systemd supervises this script; the trap makes sure a
+# failure of any child tears the whole unit down (so the LED says "needs
+# attention" instead of pretending the desktop is up).
+set -euo pipefail
+
+DISPLAY_NUM="${DISPLAY_NUM:-:0}"
+SCREEN="${OPENPC_SCREEN:-1920x1080x24}"
+export DISPLAY="$DISPLAY_NUM"
+export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/run/openpc/chrome/cache}"
+export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/run/openpc/chrome/config}"
+CHROME_USER_DIR="$XDG_CONFIG_HOME/chrome"
+FLAG_DIR="${OPENPC_RUN_DIR:-/run/openpc}"
+
+log() { printf '%s openpc-session: %s\n' "$(date -Is)" "$*" >&2; }
+
+cleanup() {
+  log "shutting down"
+  kill 0 2>/dev/null || true
+}
+trap cleanup EXIT TERM INT
+
+mkdir -p "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$CHROME_USER_DIR"
+
+# Xvfb must be listening before XFCE starts, otherwise the session dies with
+# "cannot open display" on a slow boot.
+Xvfb "$DISPLAY_NUM" -screen 0 "$SCREEN" -nolisten tcp -noreset &
+XVFB_PID=$!
+
+for _ in $(seq 1 100); do
+  if xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1; then break; fi
+  if ! kill -0 "$XVFB_PID" 2>/dev/null; then
+    log "Xvfb died during startup"
+    printf 'Xvfb failed to start\n' > "$FLAG_DIR/attention" || true
+    exit 1
+  fi
+  sleep 0.1
+done
+
+if ! xdpyinfo -display "$DISPLAY_NUM" >/dev/null 2>&1; then
+  log "Xvfb never became ready"
+  printf 'Xvfb never became ready\n' > "$FLAG_DIR/attention" || true
+  exit 1
+fi
+
+# A window manager is required: Chrome opens at 0x0 without one and the agent
+# cannot reason about a 1-pixel window.
+xfce4-session &
+XFCE_PID=$!
+for _ in $(seq 1 100); do
+  if xprop -root _NET_SUPPORTING_WM_CHECK >/dev/null 2>&1; then break; fi
+  sleep 0.1
+done
+
+CHROME_BIN="${OPENPC_CHROME:-chromium}"
+CHROME_ARGS=(
+  --no-first-run
+  --no-default-browser-check
+  --disable-dev-shm-usage
+  --disable-background-networking
+  --disable-features=Translate,MediaRouter
+  --password-store=basic
+  # The agent drives the page through CDP; cua-driver uses X input.
+  --remote-debugging-port=9222
+  --remote-debugging-address=127.0.0.1
+  --user-data-dir="$CHROME_USER_DIR"
+  --window-size=1920,1080
+  --start-maximized
+)
+
+log "starting $CHROME_BIN"
+"$CHROME_BIN" "${CHROME_ARGS[@]}" &
+CHROME_PID=$!
+
+# If Chrome exits, the desktop is useless: fail the unit so systemd restarts it
+# and the LED stops claiming everything is fine.
+wait "$CHROME_PID"
+log "browser exited; tearing down session"
+exit 1

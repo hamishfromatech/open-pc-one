@@ -1,0 +1,4 @@
+# Extras that only the Docker development path needs. Kept separate from
+# requirements-dev.txt so a native `make venv` stays minimal.
+-r requirements-dev.txt
+Pillow==11.0.0

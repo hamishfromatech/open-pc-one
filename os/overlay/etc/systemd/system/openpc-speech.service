@@ -1,0 +1,26 @@
+[Unit]
+Description=Open-PC One speech container (Zipformer ASR + phonon-31m-en TTS)
+After=llama.service docker.service
+Wants=llama.service
+Requires=docker.service
+Before=cua-driver.service openpc-engine.service
+
+[Service]
+Type=simple
+# No inbound port: the engine talks to it over the docker bridge on 127.0.0.1.
+ExecStart=/usr/bin/docker run --rm --name openpc-speech \
+    --network host \
+    --read-only \
+    --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+    --security-opt=no-new-privileges \
+    --cap-drop=ALL \
+    -e OPENPC_SPEECH_PORT=8096 \
+    -v /var/lib/openpc/models/speech:/models:ro \
+    openpc/speech:0.1.0
+ExecStop=/usr/bin/docker stop -t 10 openpc-speech
+Restart=always
+RestartSec=5
+TimeoutStartSec=90
+
+[Install]
+WantedBy=openpc.target

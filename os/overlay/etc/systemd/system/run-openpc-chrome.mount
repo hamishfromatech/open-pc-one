@@ -1,0 +1,15 @@
+[Unit]
+Description=Chrome profile and cache on tmpfs
+Documentation=https://github.com/hamishfromatech/open-pc-one
+DefaultDependencies=no
+Before=openpc-session.service
+After=local-fs.target
+
+[Mount]
+What=tmpfs
+Where=/run/openpc/chrome
+Type=tmpfs
+Options=mode=0700,uid=openpc,gid=openpc,nosuid,nodev,size=768M
+
+[Install]
+WantedBy=openpc.target

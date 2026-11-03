@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openpc-provisioning"
+version = "0.1.0"
+description = "Open-PC One: first-boot WiFi provisioning over BLE, then mDNS"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "The A-Tech Corporation PTY LTD" }]
+dependencies = []
+
+[project.optional-dependencies]
+# Only the BlueZ path needs these; the state machine runs on stdlib alone.
+ble = ["dbus-next==0.2.3"]
+identity = ["cryptography==44.0.0"]
+dev = ["pytest==8.3.4", "pytest-asyncio==0.25.2"]
+
+[project.scripts]
+openpc-provision = "openpc_provisioning.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openpc_provisioning"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-q"

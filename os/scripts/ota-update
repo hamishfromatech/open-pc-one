@@ -1,0 +1,67 @@
+#!/bin/bash
+# Write a new root filesystem into the *inactive* A/B slot and arm a three-try
+# boot. If the new slot fails to reach openpc.target three times, systemd-boot
+# drops the entry and the previous slot boots unchanged.
+#
+# Usage: ota-update.sh /path/to/rootfs.erofs
+set -euo pipefail
+
+IMAGE="${1:?usage: ota-update.sh <rootfs image>}"
+IMAGE_SHA="${IMAGE}.sha256"
+ESP_MOUNT=/boot
+BOOT_COUNT=3
+
+die() { printf 'ota-update: %s\n' "$*" >&2; exit 1; }
+log() { printf 'ota-update: %s\n' "$*"; }
+
+[ -f "$IMAGE" ] || die "no such image: $IMAGE"
+[ -f "$IMAGE_SHA" ] || die "missing checksum file: $IMAGE_SHA"
+sha256sum -c "$IMAGE_SHA" >/dev/null || die "checksum mismatch"
+
+# Which slot are we running from? The kernel command line is authoritative.
+CMDLINE=$(cat /proc/cmdline)
+case "$CMDLINE" in
+  *openpc.slot=a*) ACTIVE=a; TARGET=b ;;
+  *openpc.slot=b*) ACTIVE=b; TARGET=a ;;
+  *) die "cannot determine active slot from /proc/cmdline" ;;
+esac
+log "active slot $ACTIVE -> writing slot $TARGET"
+
+TARGET_DEV=$(blkid -L "openpc-root-$TARGET" || true)
+[ -n "$TARGET_DEV" ] || die "no partition labelled openpc-root-$TARGET"
+
+# Refuse to write the slot we booted from: that is how you turn a failed update
+# into a brick.
+ACTIVE_DEV=$(findmnt -no SOURCE /)
+if [ "$TARGET_DEV" = "$ACTIVE_DEV" ]; then
+  die "refusing to overwrite the running root ($ACTIVE_DEV)"
+fi
+
+log "writing $IMAGE -> $TARGET_DEV"
+# dd with a fixed block size and conv=fsync: the boot loader must never see a
+# half-written slot.
+dd if="$IMAGE" of="$TARGET_DEV" bs=4M conv=fsync status=progress
+sync
+
+# Verify by reading the slot back.
+EXPECTED=$(sha256sum "$IMAGE" | cut -d' ' -f1)
+ACTUAL=$(dd if="$TARGET_DEV" bs=4M count=$(( ($(stat -c%s "$IMAGE") + 4194303) / 4194304 )) 2>/dev/null | sha256sum | cut -d' ' -f1)
+[ "$EXPECTED" = "$ACTUAL" ] || die "slot verification failed"
+
+# systemd-boot boot counting: `+3-` means "three attempts, none used yet".
+# Each failed boot decrements; at 0 systemd-boot removes the entry.
+ENTRY="$ESP_MOUNT/loader/entries/openpc-$TARGET+$BOOT_COUNT.conf"
+ROOT_UUID=$(blkid -s UUID -o value "$TARGET_DEV")
+cat > "$ENTRY" <<EOF
+title   Open-PC One (slot $TARGET, new)
+linux   /vmlinuz
+initrd  /initrd.img
+options root=UUID=$ROOT_UUID ro openpc.slot=$TARGET systemd.verity=0 quiet
+EOF
+
+# Make this the one-shot default; the running slot stays as the fallback entry.
+bootctl set-oneshot "openpc-$TARGET+$BOOT_COUNT"
+bootctl set-default "openpc-$ACTIVE"
+
+log "armed $TARGET with $BOOT_COUNT tries; rebooting is safe"
+log "rollback happens automatically if openpc.target is not reached $BOOT_COUNT times"

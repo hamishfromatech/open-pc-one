@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "openpc-led"
+version = "0.1.0"
+description = "Open-PC One: the four-state status LED as a single systemd service"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "The A-Tech Corporation PTY LTD" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4", "pytest-asyncio==0.25.2"]
+
+[project.scripts]
+openpc-led = "openpc_led.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/openpc_led"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-q"

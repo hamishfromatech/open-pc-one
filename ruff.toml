@@ -1,0 +1,17 @@
+# Lint the whole repository from the root: `ruff check services os`.
+line-length = 110
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",  # long lines in docstrings and unit comments are fine
+    "UP038", # isinstance tuple form is clearer here
+]
+
+[lint.per-file-ignores]
+# dbus-next requires D-Bus signature strings as annotations ("s", "ay", "a{sv}").
+# They are not Python names, so F821/F722 are false positives in this one file.
+"services/provisioning/src/openpc_provisioning/bluez_dbus.py" = ["F821", "F722", "UP037"]
+# Tests import fixtures from conftest for type-free helpers.
+"services/*/tests/*.py" = ["F401"]

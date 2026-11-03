@@ -1,0 +1,27 @@
+[Unit]
+Description=Open-PC One cua-driver (semantic desktop control, :8098)
+After=openpc-session.service openpc-speech.service
+Wants=openpc-session.service
+Before=openpc-engine.service
+
+[Service]
+Type=simple
+User=openpc
+Group=openpc
+Environment=DISPLAY=:0
+Environment=HOME=/home/openpc
+# cua-driver does not ship bundled. It is pinned and baked to this path at image
+# build time so resolution can never fail at runtime.
+ExecStart=/opt/openpc/bin/cua-driver --port 8098 --display :0
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/openpc /home/openpc/Desktop
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressAllow=localhost
+
+[Install]
+WantedBy=openpc.target

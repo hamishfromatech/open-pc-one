@@ -1,0 +1,77 @@
+#!/bin/bash
+# Build the Open-PC One disk image.
+#
+# MUST run on a Linux host (or in the tooling container): mkosi needs loop
+# devices, mount namespaces and a native package manager. It cannot run on macOS.
+#
+# Usage:
+#   ./os/scripts/build-image [--target dev|pilot|retail]
+#
+# The target defaults to `dev` (or $OPENPC_BUILD_TARGET). A `retail` build fails
+# closed if the active model's licence is not verified - see config/models.json.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
+
+TARGET="${OPENPC_BUILD_TARGET:-dev}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target)
+      TARGET="${2:-}"
+      shift 2
+      ;;
+    --target=*)
+      TARGET="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "build-image: unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$TARGET" in
+  dev|pilot|retail) ;;
+  *)
+    echo "build-image: --target must be dev, pilot or retail (got '$TARGET')" >&2
+    exit 2
+    ;;
+esac
+
+command -v mkosi >/dev/null || { echo "mkosi not found: apt install mkosi" >&2; exit 1; }
+[ "$(uname -s)" = "Linux" ] || { echo "image build requires Linux" >&2; exit 1; }
+
+# 1. Licence gate. This is the first real step on purpose: it is cheap and it is
+#    the one failure that must never depend on somebody remembering. A retail
+#    image may not ship a model whose licence terms are unverified. The manifest
+#    is pinned to the repo so a stray /etc/openpc/models.json on the build host
+#    cannot change what the image ships.
+MANIFEST="${OPENPC_MODEL_MANIFEST:-$REPO/config/models.json}"
+echo "==> model licence gate (target: $TARGET, manifest: $MANIFEST)"
+"$REPO/os/scripts/model-config" check --target "$TARGET" --manifest "$MANIFEST"
+
+# Record the target for mkosi.postinst, which re-runs the gate in-image.
+printf '%s\n' "$TARGET" >"$HERE/build-target"
+
+# 2. Build wheels for the three Python services so the image needs no network.
+echo "==> building wheels"
+(cd "$REPO" && make wheels)
+
+# 3. Verify every pinned native artefact before spending time on mkosi, and
+#    against the same directory mkosi.postinst will verify inside the build.
+#    A missing or mismatched hash aborts the build: an unattended appliance
+#    must never boot an unverified binary.
+echo "==> verifying artefacts"
+ARTIFACTS="${OPENPC_ARTIFACTS:-$REPO/os/image/artifacts}"
+[ -d "$ARTIFACTS" ] || { echo "missing artefact directory: $ARTIFACTS (run os/scripts/pin-artifacts first)" >&2; exit 1; }
+(cd "$ARTIFACTS" && sha256sum -c SHA256SUMS --quiet)
+
+# 4. Build the image.
+echo "==> mkosi build ($TARGET)"
+exec mkosi --directory "$HERE" --force build
