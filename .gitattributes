@@ -1,0 +1,23 @@
+# Line endings are load-bearing in this tree.
+#
+#   * os/scripts/* is run by bash. A CRLF checkout leaves a CR at the end of
+#     every line, so `set -euo pipefail` becomes `set -euo pipefail<CR>` and
+#     bash rejects `pipefail` as an option name; five unrelated tests fail.
+#   * contract/openapi.json is SHA-256 pinned by contract/openapi.sha256, so a
+#     CRLF checkout changes the bytes and the provenance test fails.
+#   * the systemd units, mkosi config and the JSON/YAML manifests are parsed on
+#     a Linux image, where a trailing CR becomes part of the parsed value.
+#
+# A Windows clone with the default `core.autocrlf=true` hit all three. Pin LF
+# in the repository and on checkout, on every platform, so the bytes here are
+# the bytes a Linux runner or the appliance image sees.
+
+* text=auto eol=lf
+
+# Explicit for the files where a stray CR is a real defect rather than a
+# cosmetic one, so narrowing `*` later cannot quietly reintroduce it.
+*.sh text eol=lf
+os/scripts/* text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
