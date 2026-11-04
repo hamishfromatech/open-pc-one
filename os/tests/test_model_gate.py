@@ -89,6 +89,24 @@ def test_retail_accepts_a_verified_licence(tmp_path):
     assert "licence=verified" in result.stdout
 
 
+@pytest.mark.parametrize("subcommand", ["check", "render", "artifacts", "show"])
+def test_manifest_is_accepted_after_the_subcommand(manifest, tmp_path, subcommand):
+    """build-image and mkosi.postinst pass --manifest after the subcommand.
+
+    argparse only accepts an option on the parser that declared it, so a single
+    top-level declaration silently breaks every caller that uses the documented
+    form. This pins both positions.
+    """
+    args = [str(MODEL_CONFIG), subcommand, "--manifest", str(manifest)]
+    if subcommand == "check":
+        args += ["--target", "pilot"]
+    elif subcommand == "render":
+        args += ["--out", str(tmp_path / "out")]
+    result = subprocess.run(args, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "unrecognized arguments" not in result.stderr
+
+
 def test_the_shipped_manifest_is_blocked_for_retail_today():
     """The LFM3 licence is still `other`; a retail build must fail closed."""
     result = run_model_config(DEFAULT_MANIFEST, "check", "--target", "retail")

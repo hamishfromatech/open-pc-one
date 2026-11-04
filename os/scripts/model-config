@@ -233,6 +233,13 @@ def build_parser():
     parser.add_argument("--manifest", default=None, help="manifest path (default: $OPENPC_MODEL_MANIFEST, /etc/openpc/models.json, config/models.json)")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    def add_manifest_option(subparser):
+        # --manifest is also accepted after the subcommand, which is the form the
+        # docstring documents and the one build-image and mkosi.postinst use.
+        # SUPPRESS keeps a value given before the subcommand from being
+        # clobbered by this option's default when it is absent here.
+        subparser.add_argument("--manifest", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+
     check = sub.add_parser("check", help="fail closed on an unverified licence for a retail build")
     check.add_argument("--target", required=True, choices=BUILD_TARGETS)
     check.set_defaults(func=cmd_check)
@@ -246,6 +253,9 @@ def build_parser():
 
     show = sub.add_parser("show", help="print the resolved active model")
     show.set_defaults(func=cmd_show)
+
+    for subparser in (check, render, artifacts, show):
+        add_manifest_option(subparser)
     return parser
 
 
