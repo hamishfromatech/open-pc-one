@@ -172,7 +172,8 @@ def test_build_image_runs_the_gate_before_anything_expensive():
     wheels = text.index("make wheels")
     mkosi = text.index("exec mkosi")
     assert gate < wheels < mkosi
-    assert "$HERE/build-target" in text
+    assert "$REPO/os/image/build-target" in text
+    assert '--directory "$REPO/os/image"' in text
     # --target is parsed, not positional, and defaults to a non-retail target.
     assert "--target" in text
     assert 'TARGET="${OPENPC_BUILD_TARGET:-dev}"' in text

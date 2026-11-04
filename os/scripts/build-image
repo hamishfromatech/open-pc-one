@@ -56,8 +56,11 @@ MANIFEST="${OPENPC_MODEL_MANIFEST:-$REPO/config/models.json}"
 echo "==> model licence gate (target: $TARGET, manifest: $MANIFEST)"
 "$REPO/os/scripts/model-config" check --target "$TARGET" --manifest "$MANIFEST"
 
-# Record the target for mkosi.postinst, which re-runs the gate in-image.
-printf '%s\n' "$TARGET" >"$HERE/build-target"
+# Record the target for mkosi.postinst, which re-runs the gate in-image. The
+# postinst reads os/image/build-target, so this must be written there and not
+# next to this script: a mismatch silently falls back to `dev` and weakens the
+# gate for what was meant to be a retail build.
+printf '%s\n' "$TARGET" >"$REPO/os/image/build-target"
 
 # 2. Build wheels for the three Python services so the image needs no network.
 echo "==> building wheels"
@@ -75,7 +78,11 @@ ARTIFACTS="${OPENPC_ARTIFACTS:-$REPO/os/image/artifacts}"
 # 4. Build the image. MKOSI_OUTPUT_DIR/MKOSI_CACHE_DIR let CI put the 24 GiB
 #    image on the runner's large volume instead of the small root disk.
 echo "==> mkosi build ($TARGET)"
-MKOSI_ARGS=(--directory "$HERE" --force)
+# --directory must be os/image: mkosi reads mkosi.conf, mkosi.postinst and
+# mkosi.repart/ from there. Pointing it at os/scripts made mkosi fall back to
+# its built-in defaults and build an Ubuntu image from the host with only base
+# packages and one partition - no config, no kernel, no bootloader, no postinst.
+MKOSI_ARGS=(--directory "$REPO/os/image" --force)
 if [ -n "${MKOSI_OUTPUT_DIR:-}" ]; then
   MKOSI_ARGS+=(--output-dir "$MKOSI_OUTPUT_DIR")
 fi
