@@ -187,6 +187,18 @@ def test_postinst_reruns_the_gate_and_renders_from_the_manifest():
     assert "llama.cpp-lfm3.tar.gz" not in text
 
 
+def test_postinst_does_not_pass_root_to_useradd():
+    """mkosi already invokes useradd with --root=$BUILDROOT (mkosi(1), Scripts).
+
+    A second --root makes useradd abort with "multiple --root options", which is
+    exactly how the first image with the real config loaded failed.
+    """
+    text = (OS / "image" / "mkosi.postinst").read_text()
+    assert "useradd --root" not in text
+    assert 'useradd "${USERADD_ROOT[@]}"' in text
+    assert "USERADD_ROOT=()" in text
+
+
 def test_pin_artifacts_takes_the_llama_artifact_name_from_the_manifest(tmp_path):
     artefact_dir = tmp_path / "artifacts"
     artefact_dir.mkdir()

@@ -25,7 +25,13 @@ die() { printf 'postinst: ERROR: %s\n' "$*" >&2; exit 1; }
 # engine's WSS edge with a paired device key.
 # --------------------------------------------------------------------------
 if ! grep -q '^openpc:' "$BUILDROOT/etc/passwd"; then
-  useradd --root "$BUILDROOT" --create-home --shell /usr/sbin/nologin \
+  # mkosi runs useradd with --root=$BUILDROOT for us (mkosi(1), Scripts). Passing
+  # --root here as well fails with "useradd: multiple --root options", which is
+  # how the first real trixie build died. Only add it when the script is run
+  # outside mkosi, i.e. by hand on a checkout where /buildroot does not exist.
+  USERADD_ROOT=()
+  [ -d /buildroot ] || USERADD_ROOT=(--root "$BUILDROOT")
+  useradd "${USERADD_ROOT[@]}" --create-home --shell /usr/sbin/nologin \
     --groups bluetooth,video,render --comment "Open-PC agent" openpc
 fi
 passwd --root "$BUILDROOT" --lock openpc >/dev/null 2>&1 || true
