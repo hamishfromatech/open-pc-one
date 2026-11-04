@@ -310,7 +310,9 @@ jobs:
         if: success()
         run: |
           set -euo pipefail
-          IMAGE="$(ls "$MKOSI_OUTPUT"/openpc-one* | head -1)"
+          # Match the .raw file, not mkosi's extensionless symlink to it:
+          # zstd refuses to compress a symlink ("is a symbolic link, ignoring").
+          IMAGE="$(ls -1 "$MKOSI_OUTPUT"/openpc-one*.raw | head -1)"
           zstd -T0 -6 -o /tmp/openpc-one-image.zst "$IMAGE"
           ls -lh /tmp/openpc-one-image.zst
           echo "IMAGE_NAME=$(basename "$IMAGE")" >> "$GITHUB_ENV"
