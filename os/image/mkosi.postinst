@@ -3,8 +3,19 @@
 set -euo pipefail
 
 BUILDROOT="${BUILDROOT:?mkosi must set BUILDROOT}"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$HERE/../.." && pwd)"
+# mkosi copies this script to /work/postinst and bind-mounts the build sources
+# at /work/src, so BASH_SOURCE is not inside the checkout. mkosi.conf sets
+# BuildSources=../.. so SRCDIR is the repository root; the dirname fallback is
+# for running the script by hand from checkout/os/image/mkosi.postinst.
+if [ -n "${SRCDIR:-}" ]; then
+  REPO="$SRCDIR"
+else
+  REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+fi
+[ -f "$REPO/os/image/mkosi.postinst" ] || {
+  echo "postinst: ERROR: repository root not visible at $REPO" >&2
+  exit 1
+}
 
 say() { printf 'postinst: %s\n' "$*"; }
 die() { printf 'postinst: ERROR: %s\n' "$*" >&2; exit 1; }
@@ -67,7 +78,10 @@ install -d "$BUILDROOT/tmp/openpc-wheels"
 cp "$REPO"/os/image/wheels/*.whl "$BUILDROOT/tmp/openpc-wheels/"
 
 in_image /usr/bin/python3 -m venv /opt/openpc/venv
-in_image /opt/openpc/venv/bin/pip install --no-index \
+# HOME is not set in mkosi's script sandbox; pip would otherwise have to guess
+# a cache directory from a passwd file it cannot see. No cache: the wheelhouse
+# is already local and the image build must not need the network.
+in_image env HOME=/root PIP_NO_CACHE_DIR=1 /opt/openpc/venv/bin/pip install --no-index \
   --find-links /tmp/openpc-wheels \
   openpc-engine openpc-provisioning openpc-led \
   || die "wheelhouse install failed; run 'make wheels' on the build host first"

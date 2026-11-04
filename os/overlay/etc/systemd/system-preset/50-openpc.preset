@@ -1,0 +1,9 @@
+# mkosi runs `systemctl preset-all` after the image is assembled. A unit with an
+# [Install] section is enabled when no preset rule matches it, so the mere
+# absence of a symlink does not keep a unit out of the boot.
+#
+# openpc-speech is not part of the v0.1 image: it Requires=docker.service, which
+# this image does not ship. Its unit ships so it can be enabled when the speech
+# container exists, but it must stay off today - otherwise every boot carries a
+# permanently failed unit and the CI probe reports an unhealthy box.
+disable openpc-speech.service

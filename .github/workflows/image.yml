@@ -59,10 +59,12 @@ jobs:
           set -euo pipefail
           mkdir -p os/image/artifacts /tmp/acoder
           base="https://github.com/hamishfromatech/a-coder-cli/releases/download/${ACODER_TAG}"
-          curl -fsSL "$base/pi-linux-x64.tar.gz" -o /tmp/acoder/pi.tgz
+          # Download under the exact name SHA256SUMS lists, otherwise the
+          # checksum line cannot be verified (`pi.tgz' != `pi-linux-x64.tar.gz').
+          curl -fsSL "$base/pi-linux-x64.tar.gz" -o /tmp/acoder/pi-linux-x64.tar.gz
           curl -fsSL "$base/SHA256SUMS" -o /tmp/acoder/SHA256SUMS
           (cd /tmp/acoder && grep 'pi-linux-x64.tar.gz' SHA256SUMS | sha256sum -c -)
-          tar -xzf /tmp/acoder/pi.tgz -C /tmp/acoder
+          tar -xzf /tmp/acoder/pi-linux-x64.tar.gz -C /tmp/acoder
           bin="$(find /tmp/acoder -type f -name pi -perm -u+x | head -1)"
           test -n "$bin"
           install -m 0755 "$bin" os/image/artifacts/a-coder-cli
@@ -136,7 +138,7 @@ jobs:
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
-          df -h /
+          df -h / /mnt
 
       - name: Install mkosi and boot tooling
         run: |
@@ -147,10 +149,25 @@ jobs:
             systemd-container systemd-boot systemd-boot-efi systemd-ukify \
             debootstrap debian-archive-keyring \
             qemu-system-x86 qemu-utils ovmf
-          # Ubuntu 24.04 ships mkosi 20.2; the config needs >= 24.
-          python3 -m pip install --user --break-system-packages \
+
+          # Ubuntu noble ships debian-archive-keyring 2023.4, which predates the
+          # keys trixie's archive is signed with (04cb5019.../04b8e5f1...).
+          # mkosi's apt bootstrap then dies with NO_PUBKEY, so install trixie's
+          # keyring package itself; version and hash come from trixie's own
+          # Packages index.
+          curl -fsSL \
+            http://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb \
+            -o /tmp/debian-archive-keyring.deb
+          echo "9ea7778e443144ca490668737a8ab22dd3e748bb99e805e22ec055abeb3c7fac  /tmp/debian-archive-keyring.deb" \
+            | sha256sum -c -
+          sudo dpkg -i /tmp/debian-archive-keyring.deb
+
+          # System-wide, not --user: the build runs under sudo, whose HOME is
+          # /root, so a user install under /home/runner/.local is not importable.
+          sudo python3 -m pip install --break-system-packages \
             "git+https://github.com/systemd/mkosi@v25.3"
-          "$HOME/.local/bin/mkosi" --version
+          mkosi --version
+          systemd-repart --version | head -1
 
       - name: Build service wheels
         run: |
@@ -164,38 +181,48 @@ jobs:
           set -euo pipefail
           sudo mkdir -p "$MKOSI_OUTPUT" "$MKOSI_CACHE" /mnt/tmp
           sudo env \
-            "PATH=$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+            "HOME=$HOME" \
             "XDG_CACHE_HOME=$MKOSI_CACHE" \
             "TMPDIR=/mnt/tmp" \
             "MKOSI_OUTPUT_DIR=$MKOSI_OUTPUT" \
             "MKOSI_CACHE_DIR=$MKOSI_CACHE" \
             ./os/scripts/build-image --target pilot
           ls -lh "$MKOSI_OUTPUT"
+          df -h / /mnt
 
       - name: Cold-boot the image in QEMU
         run: |
           set -euo pipefail
-          IMAGE="$(ls "$MKOSI_OUTPUT"/openpc-one* | head -1)"
+          IMAGE="$(ls "$MKOSI_OUTPUT"/openpc-one*.raw | head -1)"
           echo "image: $IMAGE"
-          sudo mkdir -p /mnt/img /mnt/esp
+          sudo mkdir -p /mnt/img
           LOOP="$(sudo losetup -Pf --show "$IMAGE")"
           sudo partprobe "$LOOP" || true
+          sudo udevadm settle || true
           sudo blkid
           ROOT="$(sudo blkid -L openpc-root-a)"
-          ESP="$(sudo blkid -L esp)"
-          test -n "$ROOT" && test -n "$ESP"
+          test -n "$ROOT"
           sudo mount "$ROOT" /mnt/img
-          sudo mount "$ESP" /mnt/esp
 
           # Probe runs as root after the appliance target, prints to the serial
-          # console, then powers the VM off.
+          # console, then powers the VM off. It is injected into the root slot
+          # here rather than baked into the image so the shipping image stays
+          # probe-free. The console kernel argument is baked in at build time
+          # (KernelCommandLine= in mkosi.conf) - the boot entry is a UKI, so
+          # there is no loader entry left to patch.
+          sudo mkdir -p /mnt/img/usr/local/sbin
           sudo tee /mnt/img/usr/local/sbin/openpc-smoke >/dev/null <<'SMOKE'
           #!/bin/bash
           exec >/dev/ttyS0 2>&1
           set +e
           echo "SMOKE_BEGIN"
+          # `systemctl is-active A B C' succeeds if ANY unit is active, so the
+          # three checks are separate: the probe must wait for all of them.
           for _ in $(seq 1 90); do
-            if systemctl is-active --quiet openpc-led openpc-session openpc-engine; then
+            if systemctl is-active --quiet openpc-led \
+               && systemctl is-active --quiet openpc-session \
+               && systemctl is-active --quiet openpc-engine; then
               break
             fi
             sleep 10
@@ -237,12 +264,8 @@ jobs:
           sudo ln -sf ../openpc-smoke.service \
             /mnt/img/etc/systemd/system/multi-user.target.wants/openpc-smoke.service
 
-          # The image has no serial getty; the console is for the probe only.
-          ENTRY="$(ls /mnt/esp/loader/entries/*.conf | head -1)"
-          sudo sed -i 's/^options /options console=ttyS0,115200 systemd.journald.forward_to_console=1 /' "$ENTRY"
-          grep '^options' "$ENTRY"
-
-          sudo umount /mnt/img /mnt/esp
+          sync
+          sudo umount /mnt/img
           sudo losetup -d "$LOOP"
 
           cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/OVMF_VARS.fd
@@ -255,6 +278,8 @@ jobs:
             -display none -serial stdio -monitor none -no-reboot \
             >/tmp/serial.log 2>&1 || true
 
+          echo "===== smoke lines ====="
+          grep -E 'SMOKE_' /tmp/serial.log || true
           echo "===== serial tail ====="
           tail -120 /tmp/serial.log || true
           grep -q 'SMOKE_END' /tmp/serial.log || {

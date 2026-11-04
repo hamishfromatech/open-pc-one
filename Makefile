@@ -2,6 +2,7 @@
 # clone can run `make run-fake` without `make venv` (and so the container works).
 PYTHON ?= $(shell if [ -x ./.venv/bin/python ]; then echo ./.venv/bin/python; else echo python3; fi)
 PIP ?= ./.venv/bin/pip
+WHEELHOUSE := os/image/wheels
 
 .PHONY: help venv test test-engine test-provisioning test-led test-os lint check-public \
         doctor run-fake image wheels clean docker-build docker-test docker-run docker-down
@@ -57,8 +58,17 @@ doctor:
 	$(PYTHON) -m openpc_engine --state-dir ./.devstate --log-format text doctor
 
 wheels:
-	rm -rf os/image/wheels && mkdir -p os/image/wheels
-	$(PIP) wheel --no-deps -w os/image/wheels ./services/engine ./services/provisioning ./services/led
+	rm -rf $(WHEELHOUSE) && mkdir -p $(WHEELHOUSE)
+	$(PIP) wheel --no-deps -w $(WHEELHOUSE) ./services/engine ./services/provisioning ./services/led
+	# The three wheels above carry no dependencies; the image installs with
+	# --no-index, so the runtime dependencies must be in the wheelhouse too.
+	# They are resolved for the target, not for this host: the image runs
+	# Debian trixie's Python 3.13 on x86_64, whatever the build machine is.
+	$(PIP) download --only-binary=:all: --dest $(WHEELHOUSE) \
+	  --python-version 3.13 --implementation cp --abi cp313 \
+	  --platform manylinux2014_x86_64 --platform manylinux_2_28_x86_64 \
+	  -r requirements-image.txt
+	ls -l $(WHEELHOUSE)
 
 image:
 	./os/scripts/build-image

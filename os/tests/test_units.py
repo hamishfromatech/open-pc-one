@@ -203,6 +203,9 @@ def test_firewall_defaults_to_drop_inbound():
     # LAN, never from 0.0.0.0/0.
     assert "tcp dport { 8090, 8095 } accept" in text
     assert "0.0.0.0/0" not in text
+    # Predictable interface names (ens3 in QEMU, enp*/eno* on hardware) must be
+    # treated as the LAN link, or DHCP replies are dropped at boot.
+    assert '"en*"' in text
 
 
 def test_chrome_profile_lives_on_tmpfs_and_precedes_the_session():
@@ -241,6 +244,67 @@ def test_repart_defines_both_slots_and_a_separate_var():
     assert any("Label=openpc-var" in t for t in labels.values())
     # Slot B ships pre-sized so the first update never repartitions.
     assert any("Label=openpc-root-b" in t and "SizeMinBytes" in t for t in labels.values())
+
+
+def test_repart_populates_the_esp_root_and_var_from_the_image_tree():
+    repart = {p.name: p.read_text() for p in (OS / "image" / "mkosi.repart").glob("*.conf")}
+    # mkosi does not add its default ESP rule when RepartDirectories= is used, so
+    # without these the ESP is empty and QEMU boots the firmware shell.
+    assert "CopyFiles=/boot:/" in repart["10-esp.conf"]
+    assert "CopyFiles=/efi:/" in repart["10-esp.conf"]
+    # '@' is not systemd-repart syntax: it resolves to a literal /@ directory
+    # and leaves the root partition empty.
+    assert "CopyFiles=/" in repart["20-root-a.conf"]
+    assert "@/" not in repart["20-root-a.conf"]
+    # /var is its own partition (systemd-gpt-auto-generator mounts it); it needs
+    # the state directories, not an empty filesystem.
+    assert "CopyFiles=/var:/" in repart["40-var.conf"]
+
+
+def test_mkosi_conf_matches_mkosi_25_and_states_the_root_placeholder():
+    conf = (OS / "image" / "mkosi.conf").read_text()
+    content = conf.split("[Content]", 1)[1]
+    # Bootable=/Hostname= belong to [Content] in mkosi 24+. Elsewhere they are
+    # only a warning, and an ignored Bootable= silently yields no ESP.
+    assert "Bootable=yes" in content
+    assert "Hostname=openpc" in content
+    assert "Bootable=" not in conf.split("[Content]", 1)[0]
+    # mkosi 25 dies on setting names it does not know.
+    assert "PackageManagerTrees" not in conf
+    # The overlay is the image; mkosi does not read os/overlay on its own.
+    assert "ExtraTrees=../overlay:/" in conf
+    # mkosi.postinst needs the repository root, not os/image, at /work/src.
+    assert "BuildSources=../.." in conf
+    # Without the literal placeholder mkosi adds no root= to the cmdline.
+    assert "root=PARTUUID" in conf
+    assert "console=ttyS0" in conf
+
+
+def test_postinst_finds_the_repository_root_in_the_mkosi_sandbox():
+    postinst = (OS / "image" / "mkosi.postinst").read_text()
+    # mkosi copies the script to /work/postinst, so BASH_SOURCE is not inside
+    # the checkout and a dirname-derived REPO would be "/".
+    assert "SRCDIR" in postinst
+    assert 'REPO="$SRCDIR"' in postinst
+
+
+def test_speech_is_preset_out_of_the_default_boot():
+    # mkosi runs `systemctl preset-all`; a unit with [Install] is enabled unless
+    # a preset says otherwise. openpc-speech Requires=docker.service, which the
+    # v0.1 image does not ship.
+    preset = OS / "overlay" / "etc" / "systemd" / "system-preset" / "50-openpc.preset"
+    assert "disable openpc-speech.service" in preset.read_text()
+
+
+def test_wheelhouse_carries_dependencies_for_the_image_interpreter():
+    makefile = (OS.parent / "Makefile").read_text()
+    # --no-index in mkosi.postinst only works if the runtime dependencies are in
+    # the wheelhouse, resolved for trixie's Python 3.13 rather than the host's.
+    assert "requirements-image.txt" in makefile
+    assert "--python-version 3.13" in makefile
+    requirements = (OS.parent / "requirements-image.txt").read_text()
+    assert "websockets==15.0.1" in requirements
+    assert "cryptography==44.0.0" in requirements
 
 
 def test_bless_service_clears_the_boot_counter_and_ends_booting():

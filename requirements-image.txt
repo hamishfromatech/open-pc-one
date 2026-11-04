@@ -1,0 +1,12 @@
+# Runtime dependencies of the Python services, resolved for the *image*
+# interpreter (Debian trixie ships Python 3.13), not for the build host.
+# `make wheels` downloads these as manylinux x86_64 cp313 wheels so the image
+# install is `pip install --no-index` and needs no network.
+#
+# Keep in step with services/*/pyproject.toml. cffi and pycparser are
+# cryptography's transitive dependencies; pinning them keeps the wheelhouse
+# reproducible instead of resolving "latest" at build time.
+websockets==15.0.1
+cryptography==44.0.0
+cffi==2.1.1
+pycparser==3.12
