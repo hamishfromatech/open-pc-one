@@ -167,11 +167,17 @@ def test_engine_uses_systemd_owned_state_and_runtime_dirs():
     assert directive(path, "Service.RuntimeDirectory") == "openpc"
 
 
-def test_local_backends_are_loopback_only():
-    engine = UNITS / "openpc-engine.service"
-    assert "localhost" in values(engine, "Service.IPAddressAllow")
+def test_local_backends_are_loopback_only_and_the_engine_is_not():
+    # llama/speech/cua-driver bind 127.0.0.1, so the socket filter is a second
+    # lock. The engine is different: paired phones/desktop connect to 0.0.0.0:8095,
+    # so its LAN exposure is enforced by nftables, not IPAddressAllow (which
+    # would also reject the bind).
     llama = UNITS / "llama.service"
     assert "localhost" in values(llama, "Service.IPAddressAllow")
+    cua = UNITS / "cua-driver.service"
+    assert "localhost" in values(cua, "Service.IPAddressAllow")
+    engine = UNITS / "openpc-engine.service"
+    assert not values(engine, "Service.IPAddressAllow")
 
 
 def test_journald_has_a_hard_budget():

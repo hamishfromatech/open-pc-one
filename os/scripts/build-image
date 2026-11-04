@@ -72,6 +72,14 @@ ARTIFACTS="${OPENPC_ARTIFACTS:-$REPO/os/image/artifacts}"
 [ -d "$ARTIFACTS" ] || { echo "missing artefact directory: $ARTIFACTS (run os/scripts/pin-artifacts first)" >&2; exit 1; }
 (cd "$ARTIFACTS" && sha256sum -c SHA256SUMS --quiet)
 
-# 4. Build the image.
+# 4. Build the image. MKOSI_OUTPUT_DIR/MKOSI_CACHE_DIR let CI put the 24 GiB
+#    image on the runner's large volume instead of the small root disk.
 echo "==> mkosi build ($TARGET)"
-exec mkosi --directory "$HERE" --force build
+MKOSI_ARGS=(--directory "$HERE" --force)
+if [ -n "${MKOSI_OUTPUT_DIR:-}" ]; then
+  MKOSI_ARGS+=(--output-dir "$MKOSI_OUTPUT_DIR")
+fi
+if [ -n "${MKOSI_CACHE_DIR:-}" ]; then
+  MKOSI_ARGS+=(--cache-dir "$MKOSI_CACHE_DIR")
+fi
+exec mkosi "${MKOSI_ARGS[@]}" build

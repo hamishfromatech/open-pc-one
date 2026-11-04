@@ -5,6 +5,9 @@ Requires=openpc-led.service
 # Pull in the base system, then order after it: the image's default.target is a
 # symlink to this unit, so it must not also be WantedBy=multi-user.target (that
 # would be an ordering cycle systemd has to break).
-Wants=multi-user.target openpc-provision.service openpc-session.service llama.service openpc-speech.service cua-driver.service openpc-engine.service
+# openpc-speech is deliberately absent until the speech container image exists.
+# It Requires=docker.service, and docker is not part of the v0.1 image; pulling
+# it in would only add a permanently failed unit to every boot.
+Wants=multi-user.target openpc-provision.service openpc-session.service llama.service cua-driver.service openpc-engine.service
 After=multi-user.target
 AllowIsolate=yes

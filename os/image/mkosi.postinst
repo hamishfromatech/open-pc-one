@@ -19,6 +19,25 @@ if ! grep -q '^openpc:' "$BUILDROOT/etc/passwd"; then
 fi
 passwd --root "$BUILDROOT" --lock openpc >/dev/null 2>&1 || true
 
+# Directories a unit's ReadWritePaths names must exist before the unit starts,
+# otherwise systemd refuses to set up its mount namespace. The tmpfiles.d entry
+# creates most of these at boot; doing it here too keeps the first boot simple.
+# Resolve openpc's numeric id from the image, not the build host: `install -o
+# openpc` would look the name up on the host and fail.
+OPENPC_UID_GID="$(grep '^openpc:' "$BUILDROOT/etc/passwd" | cut -d: -f3,4)"
+[ -n "$OPENPC_UID_GID" ] || die "openpc user missing after useradd"
+for dir in Desktop Documents .config .cache; do
+  install -d "$BUILDROOT/home/openpc/$dir"
+done
+install -d -m 0700 \
+  "$BUILDROOT/var/lib/openpc" \
+  "$BUILDROOT/var/lib/openpc/sessions" \
+  "$BUILDROOT/var/lib/openpc/tls"
+install -d -m 0755 \
+  "$BUILDROOT/var/lib/openpc/models" \
+  "$BUILDROOT/var/lib/openpc/llama-cache"
+chown -R "$OPENPC_UID_GID" "$BUILDROOT/home/openpc" "$BUILDROOT/var/lib/openpc"
+
 # --------------------------------------------------------------------------
 # Our code, into a venv that nothing else can modify.
 # --------------------------------------------------------------------------
@@ -100,7 +119,9 @@ EOF
 UNITDIR="$BUILDROOT/etc/systemd/system"
 WANTS="$UNITDIR/openpc.target.wants"
 install -d "$WANTS"
-for unit in openpc-led openpc-provision openpc-session llama openpc-speech cua-driver openpc-engine openpc-bless; do
+# openpc-speech is not enabled: its image does not exist yet and it
+# Requires=docker.service, which this image does not ship.
+for unit in openpc-led openpc-provision openpc-session llama cua-driver openpc-engine openpc-bless; do
   ln -sf "/etc/systemd/system/$unit.service" "$WANTS/$unit.service"
 done
 ln -sf /etc/systemd/system/run-openpc-chrome.mount "$WANTS/run-openpc-chrome.mount"

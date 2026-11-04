@@ -1,32 +1,21 @@
 #!/bin/bash
-# Convert the root filesystem to read-only using an overlayfs upper layer.
+# Prepare the appliance root for a read-only life.
 #
-# An appliance is powered off at the wall. A read-only root means a power cut
-# can never leave a half-written library or systemd unit behind. Writable
-# state lives in /var, /run and the Chrome profile on tmpfs - all of which are
-# either disposable or on their own partition.
-#
-# Run once during image build (mkosi.postinst), not at boot.
+# Writable state lives on the separate openpc-var partition, which
+# systemd-gpt-auto-generator mounts at /var from the partition type - no fstab
+# entry needed. This script only prepares the directories; enforcing `ro` on /
+# is a boot-time concern and is not switched on until the A/B entries carry a
+# matching `ro` option for both slots.
 set -euo pipefail
 
-ROOT_MOUNT="${1:-/}"
-UPPER=/var/lib/overlay/upper
-WORK=/var/lib/overlay/work
+ROOT="${1:?usage: read-only-root <buildroot>}"
+[ -d "$ROOT" ] || { echo "read-only-root: no such buildroot: $ROOT" >&2; exit 1; }
 
-mkdir -p "$UPPER" "$WORK"
-
-# /etc/machine-id must be stable across boots: the appliance identity (BLE name,
-# session dirs, device registry) derives from it. Regenerating it every boot
-# would orphan every paired phone.
-rm -f /etc/machine-id
-systemd-machine-id-setup
-cp /etc/machine-id /var/lib/openpc/machine-id 2>/dev/null || true
-
-# Bind the writable parts back over the read-only root.
-for path in /var/lib/openpc /etc/NetworkManager/system-connections /etc/avahi/services /etc/systemd/system; do
-  mkdir -p "$path"
+# The writable directories the units name. Creating them here (and again in
+# tmpfiles) means the image boots even if tmpfiles is late.
+for path in var/lib/openpc var/lib/openpc/sessions var/lib/openpc/tls \
+            var/lib/openpc/models var/lib/openpc/llama-cache; do
+  install -d -m 0755 "$ROOT/$path"
 done
 
-# fstab entries for the overlay are installed by the image, not written here.
-echo "read-only root prepared: upper=$UPPER work=$WORK"
-echo "verify after reboot with: findmnt / && touch /etc/probe (must fail)"
+echo "read-only-root prepared: writable state under /var/lib/openpc"

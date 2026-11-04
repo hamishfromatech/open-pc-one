@@ -42,8 +42,10 @@ ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/var/lib/openpc /run/openpc /home/openpc/Desktop /home/openpc/Documents
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-# Local only: llama, speech and cua-driver all live on 127.0.0.1.
-IPAddressAllow=localhost
+# The engine is the one service that must accept LAN connections (paired
+# phones/desktop), so there is deliberately no IPAddressAllow=localhost here:
+# it would both block the 0.0.0.0 bind and make the WSS edge unreachable.
+# nftables is the boundary (8095 from the LAN only; never the WAN).
 
 [Install]
 WantedBy=openpc.target

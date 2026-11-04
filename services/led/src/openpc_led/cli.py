@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 from .driver import MockLedDriver, SysfsLedDriver
@@ -12,11 +13,26 @@ from .service import LedService
 from .sources import DEFAULT_RUN_DIR, FileSignalSource
 
 
+def _env_true(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="openpc-led", description=__doc__)
-    parser.add_argument("--led-name", default="openpc:status", help="/sys/class/leds/<name> to drive")
+    # Env fallbacks exist for VMs and CI, where there is no power-button ring:
+    # a drop-in sets OPENPC_LED_MOCK=1 so the service still exercises the loop.
+    parser.add_argument(
+        "--led-name",
+        default=os.environ.get("OPENPC_LED_NAME", "openpc:status"),
+        help="/sys/class/leds/<name> to drive (env: OPENPC_LED_NAME)",
+    )
     parser.add_argument("--run-dir", default=str(DEFAULT_RUN_DIR), help="directory holding the flag files")
-    parser.add_argument("--mock", action="store_true", help="log level writes instead of touching sysfs")
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        default=_env_true("OPENPC_LED_MOCK"),
+        help="log level writes instead of touching sysfs (env: OPENPC_LED_MOCK=1)",
+    )
     parser.add_argument("--log-level", default="INFO")
     return parser
 

@@ -1,0 +1,300 @@
+name: image
+
+# Build the x86_64 appliance image on a real x86_64 Linux host, then cold-boot
+# it in QEMU and assert the appliance units come up. This machine is arm64 and
+# has no Docker; GitHub's ubuntu-24.04 runners are x86_64 and free for a public
+# repository, so the build lives here.
+#
+# The image is produced with mkosi, not Docker. Everything the image bakes in
+# (wheels, cua-driver, a-coder-cli, llama.cpp) is pinned and hashed first.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/image.yml"
+      - "os/**"
+      - "services/**"
+      - "config/models.json"
+      - "Makefile"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ACODER_TAG: v0.80.194
+  CUA_TAG: cua-driver-rs-v0.33.3
+  # Pinned upstream llama.cpp commit; it contains src/models/lfm3.cpp.
+  LLAMA_COMMIT: bee23322f1baa3d2dd16b8339bed6aff4a8eb663
+  MKOSI_OUTPUT: /mnt/mkosi-out
+  MKOSI_CACHE: /mnt/mkosi-cache
+
+jobs:
+  artifacts:
+    name: pin linux-x64 artefacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl git cmake build-essential
+
+      - name: a-coder-cli (linux-x64, pinned release)
+        run: |
+          set -euo pipefail
+          mkdir -p os/image/artifacts /tmp/acoder
+          base="https://github.com/hamishfromatech/a-coder-cli/releases/download/${ACODER_TAG}"
+          curl -fsSL "$base/pi-linux-x64.tar.gz" -o /tmp/acoder/pi.tgz
+          curl -fsSL "$base/SHA256SUMS" -o /tmp/acoder/SHA256SUMS
+          (cd /tmp/acoder && grep 'pi-linux-x64.tar.gz' SHA256SUMS | sha256sum -c -)
+          tar -xzf /tmp/acoder/pi.tgz -C /tmp/acoder
+          bin="$(find /tmp/acoder -type f -name pi -perm -u+x | head -1)"
+          test -n "$bin"
+          install -m 0755 "$bin" os/image/artifacts/a-coder-cli
+          ./os/image/artifacts/a-coder-cli --version || ./os/image/artifacts/a-coder-cli --help | head -5
+
+      - name: cua-driver (linux-x86_64, pinned release)
+        run: |
+          set -euo pipefail
+          ver="${CUA_TAG#cua-driver-rs-v}"
+          url="https://github.com/trycua/cua/releases/download/${CUA_TAG}/cua-driver-rs-${ver}-linux-x86_64.tar.gz"
+          curl -fsSL "$url" -o /tmp/cua-driver.tgz
+          mkdir -p /tmp/cua-driver
+          tar -xzf /tmp/cua-driver.tgz -C /tmp/cua-driver
+          bin="$(find /tmp/cua-driver -type f -name cua-driver | head -1)"
+          test -n "$bin"
+          install -m 0755 "$bin" os/image/artifacts/cua-driver
+          file os/image/artifacts/cua-driver
+
+      - name: llama.cpp with lfm3 (linux-x64, built from pinned commit)
+        run: |
+          set -euo pipefail
+          git init /tmp/llama
+          cd /tmp/llama
+          git remote add origin https://github.com/ggml-org/llama.cpp
+          git fetch --depth 1 origin "$LLAMA_COMMIT"
+          git checkout --detach FETCH_HEAD
+          grep -q lfm3 src/models/lfm3.cpp
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF -DGGML_AVX2=ON -DGGML_OPENMP=OFF \
+            -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+          cmake --build build --target llama-server llama-cli -j"$(nproc)"
+          mkdir -p /tmp/pkg/llama.cpp
+          cp build/bin/llama-server build/bin/llama-cli /tmp/pkg/llama.cpp/
+          # The image extracts with --strip-components=1, so the tarball carries
+          # a single top-level directory.
+          tar -czf "$GITHUB_WORKSPACE/os/image/artifacts/llama.cpp-lfm3.tar.gz" \
+            -C /tmp/pkg llama.cpp
+          tar -tzf "$GITHUB_WORKSPACE/os/image/artifacts/llama.cpp-lfm3.tar.gz"
+          /tmp/pkg/llama.cpp/llama-server --version
+
+      - name: Pin hashes
+        run: |
+          ./os/scripts/pin-artifacts
+          ./os/scripts/pin-artifacts --check
+          cat os/image/artifacts/SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openpc-artifacts
+          path: os/image/artifacts
+          if-no-files-found: error
+          retention-days: 14
+
+  image:
+    name: build image and boot it
+    needs: artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: openpc-artifacts
+          path: os/image/artifacts
+
+      - name: Free runner disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
+
+      - name: Install mkosi and boot tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ca-certificates curl git python3-venv python3-pip \
+            xz-utils zstd dosfstools mtools e2fsprogs bubblewrap \
+            systemd-container systemd-boot systemd-boot-efi systemd-ukify \
+            debootstrap debian-archive-keyring \
+            qemu-system-x86 qemu-utils ovmf
+          # Ubuntu 24.04 ships mkosi 20.2; the config needs >= 24.
+          python3 -m pip install --user --break-system-packages \
+            "git+https://github.com/systemd/mkosi@v25.3"
+          "$HOME/.local/bin/mkosi" --version
+
+      - name: Build service wheels
+        run: |
+          python3 -m venv .venv
+          ./.venv/bin/pip install --upgrade pip
+          make wheels
+          ls -l os/image/wheels
+
+      - name: Build image (pilot)
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$MKOSI_OUTPUT" "$MKOSI_CACHE" /mnt/tmp
+          sudo env \
+            "PATH=$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+            "XDG_CACHE_HOME=$MKOSI_CACHE" \
+            "TMPDIR=/mnt/tmp" \
+            "MKOSI_OUTPUT_DIR=$MKOSI_OUTPUT" \
+            "MKOSI_CACHE_DIR=$MKOSI_CACHE" \
+            ./os/scripts/build-image --target pilot
+          ls -lh "$MKOSI_OUTPUT"
+
+      - name: Cold-boot the image in QEMU
+        run: |
+          set -euo pipefail
+          IMAGE="$(ls "$MKOSI_OUTPUT"/openpc-one* | head -1)"
+          echo "image: $IMAGE"
+          sudo mkdir -p /mnt/img /mnt/esp
+          LOOP="$(sudo losetup -Pf --show "$IMAGE")"
+          sudo partprobe "$LOOP" || true
+          sudo blkid
+          ROOT="$(sudo blkid -L openpc-root-a)"
+          ESP="$(sudo blkid -L esp)"
+          test -n "$ROOT" && test -n "$ESP"
+          sudo mount "$ROOT" /mnt/img
+          sudo mount "$ESP" /mnt/esp
+
+          # Probe runs as root after the appliance target, prints to the serial
+          # console, then powers the VM off.
+          sudo tee /mnt/img/usr/local/sbin/openpc-smoke >/dev/null <<'SMOKE'
+          #!/bin/bash
+          exec >/dev/ttyS0 2>&1
+          set +e
+          echo "SMOKE_BEGIN"
+          for _ in $(seq 1 90); do
+            if systemctl is-active --quiet openpc-led openpc-session openpc-engine; then
+              break
+            fi
+            sleep 10
+          done
+          for unit in openpc-led openpc-session openpc-engine openpc-bless; do
+            echo "SMOKE_${unit}=$(systemctl is-active "$unit")"
+          done
+          echo "SMOKE_PORT_8095=$(ss -ltn | awk '{print $4}' | grep -c ':8095$')"
+          echo "SMOKE_FAILED_BEGIN"
+          systemctl --failed --no-legend
+          echo "SMOKE_FAILED_END"
+          echo "SMOKE_END"
+          sync
+          systemctl poweroff -f
+          SMOKE
+          sudo chmod 0755 /mnt/img/usr/local/sbin/openpc-smoke
+
+          sudo tee /mnt/img/etc/systemd/system/openpc-smoke.service >/dev/null <<'UNIT'
+          [Unit]
+          Description=CI cold-boot probe
+          After=openpc.target multi-user.target
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/openpc-smoke
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+
+          # A VM has no power-button ring. Exercise the LED loop with the mock.
+          sudo mkdir -p /mnt/img/etc/systemd/system/openpc-led.service.d
+          sudo tee /mnt/img/etc/systemd/system/openpc-led.service.d/ci-mock.conf >/dev/null <<'DROPIN'
+          [Service]
+          Environment=OPENPC_LED_MOCK=1
+          DROPIN
+
+          sudo mkdir -p /mnt/img/etc/systemd/system/multi-user.target.wants
+          sudo ln -sf ../openpc-smoke.service \
+            /mnt/img/etc/systemd/system/multi-user.target.wants/openpc-smoke.service
+
+          # The image has no serial getty; the console is for the probe only.
+          ENTRY="$(ls /mnt/esp/loader/entries/*.conf | head -1)"
+          sudo sed -i 's/^options /options console=ttyS0,115200 systemd.journald.forward_to_console=1 /' "$ENTRY"
+          grep '^options' "$ENTRY"
+
+          sudo umount /mnt/img /mnt/esp
+          sudo losetup -d "$LOOP"
+
+          cp /usr/share/OVMF/OVMF_VARS_4M.fd /tmp/OVMF_VARS.fd
+          sudo timeout 2100 qemu-system-x86_64 \
+            -machine q35,accel=tcg -cpu max -m 6144 -smp 4 \
+            -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+            -drive if=pflash,format=raw,file=/tmp/OVMF_VARS.fd \
+            -drive file="$IMAGE",format=raw,if=virtio,cache=unsafe \
+            -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+            -display none -serial stdio -monitor none -no-reboot \
+            >/tmp/serial.log 2>&1 || true
+
+          echo "===== serial tail ====="
+          tail -120 /tmp/serial.log || true
+          grep -q 'SMOKE_END' /tmp/serial.log || {
+            echo "::error::VM never reached the smoke probe"
+            exit 1
+          }
+          for unit in openpc-led openpc-session openpc-engine; do
+            grep -q "SMOKE_${unit}=active" /tmp/serial.log || {
+              echo "::error::${unit} is not active"
+              grep "SMOKE_${unit}=" /tmp/serial.log || true
+              exit 1
+            }
+          done
+          grep -q 'SMOKE_PORT_8095=[1-9]' /tmp/serial.log || {
+            echo "::error::engine is not listening on 8095"
+            exit 1
+          }
+          echo "smoke: openpc target reached"
+
+      - name: Upload image
+        if: success()
+        run: |
+          set -euo pipefail
+          IMAGE="$(ls "$MKOSI_OUTPUT"/openpc-one* | head -1)"
+          zstd -T0 -6 -o /tmp/openpc-one-image.zst "$IMAGE"
+          ls -lh /tmp/openpc-one-image.zst
+          echo "IMAGE_NAME=$(basename "$IMAGE")" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: openpc-one-pilot-image
+          path: /tmp/openpc-one-image.zst
+          if-no-files-found: error
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: openpc-boot-log
+          path: /tmp/serial.log
+          if-no-files-found: ignore
+          retention-days: 14
