@@ -49,11 +49,29 @@ install -d "$BUILDROOT/opt/openpc/bin" "$BUILDROOT/opt/openpc/venv"
 install -d "$BUILDROOT/usr/share/doc/openpc"
 install -m 0644 "$REPO/LICENSE" "$REPO/NOTICE" "$BUILDROOT/usr/share/doc/openpc/"
 
-"$BUILDROOT/usr/bin/python3" -m venv "$BUILDROOT/opt/openpc/venv"
-PIP="$BUILDROOT/opt/openpc/venv/bin/pip"
-"$PIP" install --no-index --find-links "$REPO/os/image/wheels" \
+# Run a command inside the image. The build host may be a different distro
+# (CI is Ubuntu, the image is Debian trixie), so target binaries must not be
+# executed with the host loader. mkosi-chroot handles the arch/mount setup;
+# plain chroot is the fallback for the same-arch CI build.
+in_image() {
+  if command -v mkosi-chroot >/dev/null 2>&1; then
+    mkosi-chroot "$@"
+  else
+    chroot "$BUILDROOT" "$@"
+  fi
+}
+
+# Wheels must be visible inside the chroot; the repo path is a host path.
+rm -rf "$BUILDROOT/tmp/openpc-wheels"
+install -d "$BUILDROOT/tmp/openpc-wheels"
+cp "$REPO"/os/image/wheels/*.whl "$BUILDROOT/tmp/openpc-wheels/"
+
+in_image /usr/bin/python3 -m venv /opt/openpc/venv
+in_image /opt/openpc/venv/bin/pip install --no-index \
+  --find-links /tmp/openpc-wheels \
   openpc-engine openpc-provisioning openpc-led \
-  || die "wheelhouse missing; run 'make wheels' on the build host first"
+  || die "wheelhouse install failed; run 'make wheels' on the build host first"
+rm -rf "$BUILDROOT/tmp/openpc-wheels"
 
 for script in openpc-session ota-update enroll-tpm2 read-only-root; do
   install -m 0755 "$REPO/os/scripts/$script" "$BUILDROOT/opt/openpc/bin/$script"
