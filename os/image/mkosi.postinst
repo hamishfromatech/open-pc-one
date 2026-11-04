@@ -78,20 +78,24 @@ in_image() {
   fi
 }
 
-# Wheels must be visible inside the chroot; the repo path is a host path.
-rm -rf "$BUILDROOT/tmp/openpc-wheels"
-install -d "$BUILDROOT/tmp/openpc-wheels"
-cp "$REPO"/os/image/wheels/*.whl "$BUILDROOT/tmp/openpc-wheels/"
+# Wheels must be visible inside the chroot; the repo path is a host path. Stage
+# them under /opt, not /tmp: mkosi-chroot mounts a fresh tmpfs over the image's
+# /tmp (mkosi/run.py apivfs_options), so anything written to $BUILDROOT/tmp is
+# invisible inside the chroot and pip reports "location is ignored".
+WHEELHOUSE=/opt/openpc/.wheelhouse
+rm -rf "$BUILDROOT$WHEELHOUSE"
+install -d "$BUILDROOT$WHEELHOUSE"
+cp "$REPO"/os/image/wheels/*.whl "$BUILDROOT$WHEELHOUSE/"
 
 in_image /usr/bin/python3 -m venv /opt/openpc/venv
 # HOME is not set in mkosi's script sandbox; pip would otherwise have to guess
 # a cache directory from a passwd file it cannot see. No cache: the wheelhouse
 # is already local and the image build must not need the network.
 in_image env HOME=/root PIP_NO_CACHE_DIR=1 /opt/openpc/venv/bin/pip install --no-index \
-  --find-links /tmp/openpc-wheels \
+  --find-links "$WHEELHOUSE" \
   openpc-engine openpc-provisioning openpc-led \
   || die "wheelhouse install failed; run 'make wheels' on the build host first"
-rm -rf "$BUILDROOT/tmp/openpc-wheels"
+rm -rf "$BUILDROOT$WHEELHOUSE"
 
 for script in openpc-session ota-update enroll-tpm2 read-only-root; do
   install -m 0755 "$REPO/os/scripts/$script" "$BUILDROOT/opt/openpc/bin/$script"
