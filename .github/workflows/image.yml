@@ -230,6 +230,13 @@ jobs:
           for unit in openpc-led openpc-session openpc-engine openpc-bless; do
             echo "SMOKE_${unit}=$(systemctl is-active "$unit")"
           done
+          # The engine generates its appliance TLS identity on first boot before
+          # it binds, and under TCG that lands after the unit is already active.
+          # Wait for the socket, up to 5 minutes; the assertion below stays strict.
+          for _ in $(seq 1 60); do
+            ss -ltn | awk '{print $4}' | grep -q ':8095$' && break
+            sleep 5
+          done
           echo "SMOKE_PORT_8095=$(ss -ltn | awk '{print $4}' | grep -c ':8095$')"
           echo "SMOKE_FAILED_BEGIN"
           systemctl --failed --no-legend
