@@ -10,5 +10,6 @@ docs
 docs-internal
 os/image/wheels
 os/image/artifacts
+os/image/models
 os/image/*.raw
 os/image/*.erofs

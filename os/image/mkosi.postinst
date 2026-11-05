@@ -91,9 +91,12 @@ in_image /usr/bin/python3 -m venv /opt/openpc/venv
 # HOME is not set in mkosi's script sandbox; pip would otherwise have to guess
 # a cache directory from a passwd file it cannot see. No cache: the wheelhouse
 # is already local and the image build must not need the network.
+# The ble extra is required, not optional: openpc-provision imports dbus_next
+# on its only real path. Without it the unit dies with ModuleNotFoundError on
+# every boot and BLE provisioning cannot run at all.
 in_image env HOME=/root PIP_NO_CACHE_DIR=1 /opt/openpc/venv/bin/pip install --no-index \
   --find-links "$WHEELHOUSE" \
-  openpc-engine openpc-provisioning openpc-led \
+  openpc-engine "openpc-provisioning[ble]" openpc-led \
   || die "wheelhouse install failed; run 'make wheels' on the build host first"
 rm -rf "$BUILDROOT$WHEELHOUSE"
 
@@ -116,6 +119,31 @@ install -d "$BUILDROOT/etc/openpc"
 printf '%s\n' "$BUILD_TARGET" >"$BUILDROOT/etc/openpc/build-target"
 install -m 0755 "$REPO/os/scripts/model-config" "$BUILDROOT/opt/openpc/bin/model-config"
 install -m 0755 "$REPO/os/scripts/openpc-llama" "$BUILDROOT/opt/openpc/bin/openpc-llama"
+
+# --------------------------------------------------------------------------
+# Weights. Nothing in the tree used to put a model on the appliance, so llama
+# died with "failed to open GGUF file ... (No such file or directory)" and the
+# probe saw 49 restarts. os/scripts/fetch-model stages the file named by the
+# manifest; this installs it.
+#
+# dev tolerates an empty models dir (fast iteration). pilot and retail must not
+# ship a box whose whole purpose is local inference with no model in it.
+# --------------------------------------------------------------------------
+MODELS_SRC="$REPO/os/image/models"
+if [ -d "$MODELS_SRC" ] && [ -n "$(ls -A "$MODELS_SRC" 2>/dev/null)" ]; then
+  install -d "$BUILDROOT/var/lib/openpc/models"
+  for f in "$MODELS_SRC"/*.gguf; do
+    [ -e "$f" ] || continue
+    install -m 0644 "$f" "$BUILDROOT/var/lib/openpc/models/"
+  done
+  chown -R 1000:1000 "$BUILDROOT/var/lib/openpc/models"
+  echo "postinst: installed $(ls -1 "$MODELS_SRC"/*.gguf 2>/dev/null | wc -l) model file(s)"
+else
+  case "$BUILD_TARGET" in
+    dev) echo "postinst: no weights staged (dev) - llama will not serve on this image" >&2 ;;
+    *)   die "no weights in $MODELS_SRC - run ./os/scripts/fetch-model before building a $BUILD_TARGET image" ;;
+  esac
+fi
 
 # --------------------------------------------------------------------------
 # Pinned native artefacts. The image refuses to build without them: an

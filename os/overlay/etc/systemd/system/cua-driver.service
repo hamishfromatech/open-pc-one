@@ -29,7 +29,9 @@ NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/run/openpc /home/openpc/Desktop /home/openpc/.cache/cua-driver
+# A leading dash makes a missing path non-fatal. Without it systemd fails the
+# whole unit with 226/NAMESPACE before it ever execs the binary.
+ReadWritePaths=/run/openpc /home/openpc/Desktop -/home/openpc/.cache/cua-driver
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 IPAddressAllow=localhost
 

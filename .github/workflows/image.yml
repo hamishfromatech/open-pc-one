@@ -217,6 +217,16 @@ jobs:
           print("wheelhouse covers every image requirement and import")
           PY
 
+      - name: Fetch model weights
+        run: |
+          set -euo pipefail
+          # Nothing in the tree ever put weights on the appliance, so llama died
+          # with "failed to open GGUF file ... (No such file or directory)" on the
+          # pilot image. The manifest names the model; this stages it.
+          ./os/scripts/fetch-model
+          ls -lh os/image/models
+          ./os/scripts/fetch-model --check
+
       - name: Build image (pilot)
         run: |
           set -euo pipefail

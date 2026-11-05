@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""Fetch the active model's GGUF into os/image/models/ for the image build.
+
+WHY THIS EXISTS
+---------------
+Nothing in the tree ever put weights on the appliance. The pilot image booted
+with /var/lib/openpc/models empty, so llama.service died 49 times with:
+
+    failed to open GGUF file '/var/lib/openpc/models/LFM3-1.7B-Q4_K_M.gguf'
+    (No such file or directory)
+
+config/models.json is the only place a model is named, so this reads that same
+manifest rather than hard-coding a repo or filename.
+
+    ./os/scripts/fetch-model              # fetch whatever the manifest names
+    ./os/scripts/fetch-model --check      # verify only, no network
+    ./os/scripts/fetch-model --dest DIR   # write somewhere else
+
+A gated repo needs HF_TOKEN in the environment. The file is not committed:
+os/image/models/ is gitignored and dockerignored, exactly like os/image/artifacts.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+DEFAULT_MANIFEST = REPO / "config" / "models.json"
+DEFAULT_DEST = REPO / "os" / "image" / "models"
+
+
+def load_active(manifest: Path) -> dict:
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    active = data["active"]
+    model = data["models"][active]
+    for key in ("repoId", "file"):
+        if not model.get(key):
+            raise SystemExit(f"manifest model {active!r} is missing {key!r}")
+    return {"id": active, **model}
+
+
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def download(repo_id: str, filename: str, dest: Path) -> Path:
+    url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+    target = dest / filename
+    partial = target.with_suffix(target.suffix + ".part")
+
+    headers = {"User-Agent": "openpc-fetch-model/1"}
+    token = os.environ.get("HF_TOKEN")
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            print(f"fetching {url}")
+            print(f"  {total / 1e9:.2f} GB" if total else "  size unknown")
+            done = 0
+            with partial.open("wb") as out:
+                while True:
+                    chunk = resp.read(1 << 22)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    done += len(chunk)
+                    if total:
+                        pct = 100 * done / total
+                        print(f"\r  {pct:5.1f}%  {done / 1e9:.2f} GB", end="", flush=True)
+            print()
+    except urllib.error.HTTPError as e:
+        partial.unlink(missing_ok=True)
+        hint = " (gated repo: set HF_TOKEN)" if e.code in (401, 403) else ""
+        raise SystemExit(f"download failed: HTTP {e.code}{hint}") from e
+
+    partial.replace(target)
+    return target
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--manifest", default=os.environ.get("OPENPC_MODEL_MANIFEST", str(DEFAULT_MANIFEST)))
+    ap.add_argument("--dest", default=str(DEFAULT_DEST))
+    ap.add_argument("--check", action="store_true", help="verify only; never touch the network")
+    args = ap.parse_args()
+
+    manifest = Path(args.manifest)
+    dest = Path(args.dest)
+    model = load_active(manifest)
+    target = dest / model["file"]
+
+    print(f"model   : {model['id']} ({model.get('quant', '?')})")
+    print(f"repo    : {model['repoId']}")
+    print(f"file    : {model['file']}")
+    print(f"dest    : {target}")
+
+    if target.is_file() and target.stat().st_size > 0:
+        print(f"present : {target.stat().st_size / 1e9:.2f} GB")
+        print(f"sha256  : {sha256_of(target)}")
+        return 0
+
+    if args.check:
+        print("MISSING: run ./os/scripts/fetch-model to download it", file=sys.stderr)
+        return 1
+
+    dest.mkdir(parents=True, exist_ok=True)
+    got = download(model["repoId"], model["file"], dest)
+    print(f"wrote   : {got}  ({got.stat().st_size / 1e9:.2f} GB)")
+    print(f"sha256  : {sha256_of(got)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

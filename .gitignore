@@ -8,6 +8,7 @@ build/
 dist/
 os/image/wheels/
 os/image/artifacts/*
+os/image/models/*
 !os/image/artifacts/SHA256SUMS
 os/image/build-target
 os/image/*.raw
