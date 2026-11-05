@@ -15,7 +15,14 @@ Registered through ``org.bluez.GattManager1.RegisterApplication`` and
 ``org.bluez.LEAdvertisingManager1.RegisterAdvertisement`` on ``/org/bluez/hci0``.
 """
 
-from __future__ import annotations
+# NOTE: do NOT re-add "from __future__ import annotations" here.
+# dbus-next 0.2.3 reads method annotations at class-creation time, and the
+# future import turns them into source text: "-> None" arrives as the string
+# "None" and parse_annotation raises
+#   ValueError: service annotations must be a string constant (got None)
+# which killed openpc-provision on every boot of the pilot image. The dbus
+# type signatures below are already string constants ("s", "ay", "a{sv}"),
+# which is exactly what dbus-next wants.
 
 import asyncio
 import logging

@@ -313,6 +313,11 @@ jobs:
             echo "SMOKE_PORT_${p}=$(ss -ltn | awk '{print $4}' | grep -c ":${p}\$")"
           done
           echo "SMOKE_SOCK_CUA=$( [ -S /run/openpc/cua-driver.sock ] && echo 1 || echo 0 )"
+          # /var must be the openpc-var partition, not the empty copy on the
+          # read-only root. When it is not, the model file is invisible and llama
+          # fails with "No such file or directory".
+          echo "SMOKE_VAR_MOUNTED=$(mountpoint -q /var && echo 1 || echo 0)"
+          echo "SMOKE_MODELS=$(ls -1 /var/lib/openpc/models/*.gguf 2>/dev/null | wc -l)"
 
           echo "SMOKE_FAILED_BEGIN"
           systemctl --failed --no-legend
@@ -397,6 +402,10 @@ jobs:
           # 5. Listener sockets. 8095 is the engine (WSS), 8080 is llama.cpp.
           grep -qE 'SMOKE_PORT_8095=[1-9]' /tmp/serial.log || fail "engine is not listening on 8095"
           grep -qE 'SMOKE_PORT_8080=[1-9]' /tmp/serial.log || fail "llama is not listening on 8080"
+
+          # 6. /var is its own partition and carries the weights.
+          grep -q 'SMOKE_VAR_MOUNTED=1' /tmp/serial.log || fail "/var is not mounted from openpc-var"
+          grep -qE 'SMOKE_MODELS=[1-9]' /tmp/serial.log || fail "no GGUF on /var/lib/openpc/models"
 
           # 6. cua-driver 0.33.3 is a unix-socket daemon, not a TCP listener.
           grep -q 'SMOKE_SOCK_CUA=1' /tmp/serial.log || fail "cua-driver socket missing"

@@ -21,7 +21,11 @@ Restart=always
 RestartSec=3
 # Prefill on this box is the bottleneck (a cold 131k prompt is 44-109 minutes of
 # CPU). Never let a wedged server hold the port: kill it and let systemd retry.
-TimeoutStartSec=120
+# 120 s is generous on the real box but not under QEMU TCG, where loading a
+# 1.1 GB GGUF and allocating a 262144-token context takes far longer; the
+# unit was killed mid-load and restarted. This is a start timeout only -
+# a wedged server is still killed and retried by Restart=always.
+TimeoutStartSec=300
 KillMode=mixed
 CPUWeight=200
 MemoryMax=5G

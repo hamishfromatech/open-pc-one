@@ -1,0 +1,15 @@
+# The var partition holds state that must survive an OTA update: model weights,
+# the device registry, and the agent's session state.
+#
+# This entry is explicit because systemd-gpt-auto-generator did NOT claim the
+# partition on the pilot image. The partition was built and was present as
+# /dev/vda4 labelled openpc-var, but nothing mounted it, so /var fell back to
+# the copy on the read-only root - which systemd-repart leaves empty precisely
+# because /var is a mount point of another partition. llama.service then exited
+# with a missing-model error because the weights it was told to load were not
+# reachable.
+#
+# Mounting by LABEL is stable across rebuilds: mkosi.repart/40-var.conf pins
+# Label=openpc-var, so this survives regenerated PARTUUIDs. No model is named
+# here - config/models.json stays the only place a model is named.
+LABEL=openpc-var  /var  ext4  defaults,noatime,x-systemd.device-timeout=10s  0  2
