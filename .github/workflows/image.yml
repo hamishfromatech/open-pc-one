@@ -435,12 +435,30 @@ jobs:
           sudo umount /mnt/img
           sudo losetup -d "$LOOP2"
 
-          # Prove the artifact is clean rather than asserting it.
-          for marker in SMOKE_BEGIN OPENPC_LED_MOCK=1 openpc-smoke; do
-            n=$(grep -a -c -- "$marker" "$IMAGE" || true)
-            echo "deinject: $marker occurrences = ${n:-0}"
-            [ "${n:-0}" = "0" ] || fail "image still contains '$marker' after de-injection"
+          # Prove the artifact is clean by mounting it and checking the files are
+          # gone. A raw byte search is not a valid test: ext4 frees blocks without
+          # zeroing them, so grep finds content that has already been deleted.
+          LOOP3="$(sudo losetup -Pf --show "$IMAGE")"
+          sudo partprobe "$LOOP3" || true
+          sudo udevadm settle || true
+          sudo mount "$(sudo blkid -L openpc-root-a)" /mnt/img
+          for path in \
+              /mnt/img/usr/local/sbin/openpc-smoke \
+              /mnt/img/etc/systemd/system/openpc-smoke.service \
+              /mnt/img/etc/systemd/system/multi-user.target.wants/openpc-smoke.service \
+              /mnt/img/etc/systemd/system/openpc-led.service.d/ci-mock.conf; do
+            if sudo test -e "$path"; then
+              sudo umount /mnt/img || true
+              sudo losetup -d "$LOOP3" || true
+              fail "still present after de-injection: ${path#/mnt/img}"
+            fi
+            echo "deinject: absent ${path#/mnt/img}"
           done
+          # The enabled-by-default link is the dangerous one: without it the probe
+          # cannot run at all even if the unit file somehow survived.
+          sudo umount /mnt/img
+          sudo losetup -d "$LOOP3"
+          echo "deinject: probe, unit, want-link and LED mock are all absent"
 
       - name: Upload image
         if: success()
