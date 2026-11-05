@@ -109,7 +109,22 @@ async def _run(args: argparse.Namespace) -> int:
         on_state=on_state,
     )
 
-    if await service.run():
+    # Starting the peripheral can fail for reasons that are not faults: a VM has
+    # no Bluetooth adapter, bluetoothd may be absent, or the system bus may not
+    # be reachable yet. The unit is non-blocking by design ("nothing gates on
+    # it"), so log and carry on instead of crash-looping - the box may still
+    # come up on the wired network.
+    log = logging.getLogger("openpc.provisioning")
+    try:
+        online = await service.run()
+    except Exception as exc:
+        log.warning(
+            "Bluetooth provisioning unavailable (%s: %s); relying on the wired network",
+            type(exc).__name__,
+            exc,
+        )
+        online = False
+    if online:
         return 0
 
     if args.simulate_credentials:

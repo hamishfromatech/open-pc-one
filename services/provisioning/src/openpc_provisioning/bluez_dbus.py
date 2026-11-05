@@ -191,11 +191,18 @@ class DbusBleTransport:
 
     async def start(self) -> None:
         from dbus_next.aio import MessageBus
+        from dbus_next.constants import BusType
 
         classes = _classes()
         Characteristic = classes["Characteristic"]
 
-        self._bus = await MessageBus().connect()
+        # BlueZ lives on the SYSTEM bus. MessageBus() defaults to the *session*
+        # bus, which does not exist on an appliance with no desktop login - the
+        # unit died with:
+        #   InvalidAddressError: DBUS_SESSION_BUS_ADDRESS not set and could not
+        #   get DISPLAY environment variable to get bus address
+        # and then crash-looped. Be explicit.
+        self._bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
         bus = self._bus
 
         self._service = classes["GattService"]()
