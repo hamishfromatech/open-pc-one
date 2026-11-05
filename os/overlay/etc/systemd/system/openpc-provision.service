@@ -9,6 +9,11 @@ Wants=bluetooth.target
 # that never arrives.
 Before=network-online.target
 Wants=network.target
+# StartLimit* are [Unit] keys. They were in [Service], where systemd
+# logs "Unknown key ... ignoring" and enforces nothing - the pilot
+# image restarted this unit 17 times with no cap.
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -23,9 +28,8 @@ RuntimeDirectory=openpc
 ExecStart=/opt/openpc/venv/bin/openpc-provision --interface wlan0 --cert /var/lib/openpc/tls/engine.crt --devices /var/lib/openpc/devices.json
 Restart=on-failure
 RestartSec=5
-# Never spin forever on a radio fault; the LED goes amber and a human looks.
-StartLimitIntervalSec=300
-StartLimitBurst=5
+# Never spin forever on a radio fault; the LED goes amber and a human
+# looks. The cap itself lives in [Unit] above.
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

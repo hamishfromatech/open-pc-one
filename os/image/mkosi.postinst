@@ -143,6 +143,14 @@ for tty in 1 2 3 4 5 6; do
   ln -sf /dev/null "$BUILDROOT/etc/systemd/system/getty@tty$tty.service"
 done
 ln -sf /dev/null "$BUILDROOT/etc/systemd/system/serial-getty@ttyS0.service"
+
+# The image runs NetworkManager; nothing uses networkd. Left unmasked, a fresh
+# boot spends ~120 s sitting in systemd-networkd-wait-online before it times
+# out, and openpc-session has After=network-online.target, so that timeout is on
+# the critical path. The pilot image reached openpc.target at 157 s, of which
+# ~120 s was this wait.
+ln -sf /dev/null "$BUILDROOT/etc/systemd/system/systemd-networkd-wait-online.service"
+
 passwd --root "$BUILDROOT" --lock root >/dev/null 2>&1 || true
 
 # SSH is LAN-only (see nftables) and key-only.

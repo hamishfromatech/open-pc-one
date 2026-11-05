@@ -12,9 +12,15 @@ Requires=openpc.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-# `-` because the command is a no-op (and exits non-zero) when the entry was not
-# installed with a boot counter; that must not stop the flag below.
-ExecStart=-/usr/bin/systemd-bless-boot good
+# Two separate failures were hidden here before:
+#   1. Debian trixie ships systemd-bless-boot in /usr/lib/systemd, not /usr/bin.
+#   2. A leading '-' swallowed that miss, and RemainAfterExit=yes then reported
+#      `active` while nothing ran, so A/B slot blessing silently never happened.
+#
+# The wrapper keeps the legitimate no-op — a non-boot-counted entry makes
+# systemd-bless-boot exit non-zero, which is not an error — while making a
+# MISSING binary a hard failure the boot probe can see.
+ExecStart=/bin/sh -c 'test -x /usr/lib/systemd/systemd-bless-boot || { echo "systemd-bless-boot missing at /usr/lib/systemd/systemd-bless-boot" >&2; exit 1; }; /usr/lib/systemd/systemd-bless-boot good || echo "bless: entry is not boot-counted, nothing to clear"'
 # The LED leaves BOOTING on this file.
 ExecStartPost=/usr/bin/touch /run/openpc/boot-complete
 

@@ -37,7 +37,7 @@ def manifest_payload(*, status: str = "unverified", artifact: str = "llama.cpp-l
                 "llamaCpp": {
                     "architecture": "test",
                     "artifact": artifact,
-                    "args": ["--ctx-size", "262144", "--flash-attn"],
+                    "args": ["--ctx-size", "262144", "--flash-attn", "on"],
                 },
             }
         },
@@ -134,7 +134,7 @@ def test_render_writes_argv_model_summary_and_the_manifest(manifest, tmp_path):
 
     args = (out / "llama.args").read_text().splitlines()
     assert args[:2] == ["--model", "/var/lib/openpc/models/test-1.7b.gguf"]
-    assert args[2:] == ["--ctx-size", "262144", "--flash-attn"]
+    assert args[2:] == ["--ctx-size", "262144", "--flash-attn", "on"]
 
     public = json.loads((out / "model.json").read_text())
     assert public["id"] == "test-1.7b"
@@ -272,3 +272,48 @@ def test_launcher_refuses_to_start_without_rendered_args(tmp_path):
     )
     assert result.returncode == 78
     assert "missing or empty" in result.stderr
+
+
+# The pilot image's llama.service exited 1 on every start because the manifest
+# listed "--flash-attn" with no value and llama.cpp consumed the next flag:
+#     error: unknown value for --flash-attn: '--cache-type-k'
+# llama.cpp accepts --flash-attn [on|off|auto]. Any flag that takes a value must
+# therefore be followed by one.
+LLAMA_VALUE_FLAGS = {
+    "--host", "--port", "--ctx-size", "--flash-attn", "--cache-type-k",
+    "--cache-type-v", "--threads", "--parallel", "--model", "--n-gpu-layers",
+    "--batch-size", "--ubatch-size", "--rope-scaling", "--rope-freq-base",
+    "--split-mode", "--tensor-split", "--alias", "--api-key", "--timeout",
+}
+LLAMA_FLAG_STARTS = ("--",)
+
+
+def _llama_args(manifest_path: Path) -> list[str]:
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    model = data["models"][data["active"]]
+    return list(model["llamaCpp"]["args"])
+
+
+def test_every_value_taking_llama_flag_has_a_value():
+    """The shipped manifest is what the image renders at build time."""
+    args = _llama_args(DEFAULT_MANIFEST)
+    offenders = []
+    for i, tok in enumerate(args):
+        if tok not in LLAMA_VALUE_FLAGS:
+            continue
+        nxt = args[i + 1] if i + 1 < len(args) else None
+        if nxt is None or nxt.startswith(LLAMA_FLAG_STARTS):
+            offenders.append(f"{tok} followed by {nxt!r}")
+    msg = "llama.cpp flags missing a value (it will eat the next flag): " + "; ".join(offenders)
+    assert not offenders, msg
+
+
+def test_llama_args_alternate_flags_and_values():
+    """No flag may be immediately followed by another flag."""
+    args = _llama_args(DEFAULT_MANIFEST)
+    bad = [
+        f"{args[i]} -> {args[i + 1]}"
+        for i in range(len(args) - 1)
+        if args[i].startswith("--") and args[i + 1].startswith("--")
+    ]
+    assert not bad, "adjacent flags in llama args: " + ", ".join(bad)

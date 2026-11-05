@@ -176,6 +176,47 @@ jobs:
           make wheels
           ls -l os/image/wheels
 
+      - name: Wheelhouse covers every image import
+        run: |
+          set -euo pipefail
+          # openpc-provision died 17 times on the pilot image with
+          # ModuleNotFoundError: dbus_next, because requirements-image.txt never
+          # listed it. The wheelhouse install is `pip install --no-index`, so a
+          # missing distribution cannot be resolved at boot - it has to be caught
+          # here, at build time.
+          python3 - <<'PY'
+          import glob, os, re, sys
+
+          wheels = [os.path.basename(w) for w in glob.glob('os/image/wheels/*.whl')]
+          have = {w.split('-')[0].lower().replace('_', '-') for w in wheels}
+          print(f"wheelhouse: {len(wheels)} wheels")
+
+          reqs = []
+          for raw in open('requirements-image.txt', encoding='utf-8'):
+              line = raw.split('#')[0].strip()
+              if line:
+                  reqs.append(re.split(r'[=<>!~\[]', line)[0].strip().lower().replace('_', '-'))
+          missing = [r for r in reqs if r not in have]
+
+          # Modules the image services import unconditionally on their real paths.
+          # import name -> distribution name
+          required_imports = {
+              'dbus_next': 'dbus-next',   # services/provisioning/.../bluez_dbus.py
+              'websockets': 'websockets',
+              'cryptography': 'cryptography',
+          }
+          for module, dist in required_imports.items():
+              if dist not in have:
+                  missing.append(f"{dist} (imported as {module})")
+
+          if missing:
+              print("::error::wheelhouse cannot satisfy the image:")
+              for m in missing:
+                  print("  missing:", m)
+              sys.exit(1)
+          print("wheelhouse covers every image requirement and import")
+          PY
+
       - name: Build image (pilot)
         run: |
           set -euo pipefail
@@ -217,27 +258,52 @@ jobs:
           exec >/dev/ttyS0 2>&1
           set +e
           echo "SMOKE_BEGIN"
-          # `systemctl is-active A B C' succeeds if ANY unit is active, so the
-          # three checks are separate: the probe must wait for all of them.
+
+          # openpc-provision is Type=simple and legitimately exits 0 on a wired
+          # boot (the zero-setup fallback), so "active" is the WRONG test for it.
+          # What must hold for EVERY unit is: not failed, and never restarted.
+          MUST_BE_ACTIVE="openpc-led.service openpc-session.service openpc-engine.service llama.service cua-driver.service openpc-bless.service"
+          WANTS=/etc/systemd/system/openpc.target.wants
+
+          # Wait until the must-be-active set is genuinely up, not merely forked.
+          # openpc.target is reached when Type=simple units have forked, and llama
+          # and cua-driver used to die two seconds later while the old probe still
+          # reported success.
           for _ in $(seq 1 90); do
-            if systemctl is-active --quiet openpc-led \
-               && systemctl is-active --quiet openpc-session \
-               && systemctl is-active --quiet openpc-engine; then
-              break
-            fi
+            ok=1
+            for u in $MUST_BE_ACTIVE; do
+              systemctl is-active --quiet "$u" || ok=0
+            done
+            [ "$ok" = 1 ] && break
             sleep 10
           done
-          for unit in openpc-led openpc-session openpc-engine openpc-bless; do
-            echo "SMOKE_${unit}=$(systemctl is-active "$unit")"
+
+          # Give the crash-loopers time to reveal themselves before sampling.
+          sleep 20
+
+          # Per-unit verdict for everything openpc.target wants.
+          for path in "$WANTS"/*.service; do
+            unit=$(basename "$path")
+            short=${unit%.service}
+            state=$(systemctl is-active "$unit" 2>/dev/null)
+            restarts=$(systemctl show -p NRestarts --value "$unit" 2>/dev/null)
+            failed=$(systemctl is-failed --quiet "$unit" && echo yes || echo no)
+            echo "SMOKE_U_${short}:state=${state}"
+            echo "SMOKE_U_${short}:restarts=${restarts:-0}"
+            echo "SMOKE_U_${short}:failed=${failed}"
           done
-          # The engine generates its appliance TLS identity on first boot before
-          # it binds, and under TCG that lands after the unit is already active.
-          # Wait for the socket, up to 5 minutes; the assertion below stays strict.
+
+          # Listening sockets the appliance is supposed to hold open.
+          # 8095 engine (WSS), 8080 llama.cpp HTTP.
           for _ in $(seq 1 60); do
             ss -ltn | awk '{print $4}' | grep -q ':8095$' && break
             sleep 5
           done
-          echo "SMOKE_PORT_8095=$(ss -ltn | awk '{print $4}' | grep -c ':8095$')"
+          for p in 8095 8080; do
+            echo "SMOKE_PORT_${p}=$(ss -ltn | awk '{print $4}' | grep -c ":${p}\$")"
+          done
+          echo "SMOKE_SOCK_CUA=$( [ -S /run/openpc/cua-driver.sock ] && echo 1 || echo 0 )"
+
           echo "SMOKE_FAILED_BEGIN"
           systemctl --failed --no-legend
           echo "SMOKE_FAILED_END"
@@ -289,22 +355,72 @@ jobs:
           grep -E 'SMOKE_' /tmp/serial.log || true
           echo "===== serial tail ====="
           tail -120 /tmp/serial.log || true
-          grep -q 'SMOKE_END' /tmp/serial.log || {
-            echo "::error::VM never reached the smoke probe"
-            exit 1
-          }
-          for unit in openpc-led openpc-session openpc-engine; do
-            grep -q "SMOKE_${unit}=active" /tmp/serial.log || {
-              echo "::error::${unit} is not active"
-              grep "SMOKE_${unit}=" /tmp/serial.log || true
-              exit 1
-            }
+
+          fail() { echo "::error::$1"; exit 1; }
+
+          grep -q 'SMOKE_END' /tmp/serial.log || fail "VM never reached the smoke probe"
+
+          # 1. The units that must be running are running.
+          for u in openpc-led openpc-session openpc-engine llama cua-driver openpc-bless; do
+            grep -q "SMOKE_U_${u}:state=active" /tmp/serial.log \
+              || fail "$u is not active"
           done
-          grep -q 'SMOKE_PORT_8095=[1-9]' /tmp/serial.log || {
-            echo "::error::engine is not listening on 8095"
-            exit 1
-          }
-          echo "smoke: openpc target reached"
+
+          # 2. No unit restarted. Crash-loopers sit in `activating (auto-restart)`,
+          #    so `systemctl --failed` alone cannot see them - NRestarts can.
+          if grep -E 'SMOKE_U_[a-z-]+:restarts=[1-9]' /tmp/serial.log; then
+            fail "one or more appliance units restarted (crash loop)"
+          fi
+
+          # 3. No unit is failed.
+          if grep -qE 'SMOKE_U_[a-z-]+:failed=yes' /tmp/serial.log; then
+            grep -E 'SMOKE_U_[a-z-]+:failed=yes' /tmp/serial.log
+            fail "one or more appliance units are failed"
+          fi
+
+          # 4. The SMOKE_FAILED block must be empty. It was never asserted before,
+          #    and it was not empty.
+          blocked=$(awk '/SMOKE_FAILED_BEGIN/{f=1;next} /SMOKE_FAILED_END/{f=0} f' /tmp/serial.log \
+                     | tr -d '[:space:]')
+          [ -z "$blocked" ] || fail "systemctl --failed reported units: $blocked"
+
+          # 5. Listener sockets. 8095 is the engine (WSS), 8080 is llama.cpp.
+          grep -qE 'SMOKE_PORT_8095=[1-9]' /tmp/serial.log || fail "engine is not listening on 8095"
+          grep -qE 'SMOKE_PORT_8080=[1-9]' /tmp/serial.log || fail "llama is not listening on 8080"
+
+          # 6. cua-driver 0.33.3 is a unix-socket daemon, not a TCP listener.
+          grep -q 'SMOKE_SOCK_CUA=1' /tmp/serial.log || fail "cua-driver socket missing"
+
+          echo "smoke: every appliance unit is up, none restarted, listeners bound"
+
+          # ------------------------------------------------------------------
+          # De-inject the probe before this image is published.
+          #
+          # The probe, its unit and the LED mock were previously baked into the
+          # artifact that got uploaded, so anyone booting it got the probe
+          # enabled, OPENPC_LED_MOCK=1 forced on the real LED service, and a
+          # hard poweroff ~10 s after openpc.target. That is a ship blocker for
+          # a VM image handed to a tester.
+          # ------------------------------------------------------------------
+          LOOP2="$(sudo losetup -Pf --show "$IMAGE")"
+          sudo partprobe "$LOOP2" || true
+          sudo udevadm settle || true
+          sudo mount "$(sudo blkid -L openpc-root-a)" /mnt/img
+          sudo rm -f /mnt/img/usr/local/sbin/openpc-smoke \
+                     /mnt/img/etc/systemd/system/openpc-smoke.service \
+                     /mnt/img/etc/systemd/system/multi-user.target.wants/openpc-smoke.service \
+                     /mnt/img/etc/systemd/system/openpc-led.service.d/ci-mock.conf
+          sudo rmdir /mnt/img/etc/systemd/system/openpc-led.service.d 2>/dev/null || true
+          sudo sync
+          sudo umount /mnt/img
+          sudo losetup -d "$LOOP2"
+
+          # Prove the artifact is clean rather than asserting it.
+          for marker in SMOKE_BEGIN OPENPC_LED_MOCK=1 openpc-smoke; do
+            n=$(grep -a -c -- "$marker" "$IMAGE" || true)
+            echo "deinject: $marker occurrences = ${n:-0}"
+            [ "${n:-0}" = "0" ] || fail "image still contains '$marker' after de-injection"
+          done
 
       - name: Upload image
         if: success()
@@ -315,7 +431,29 @@ jobs:
           IMAGE="$(ls -1 "$MKOSI_OUTPUT"/openpc-one*.raw | head -1)"
           zstd -T0 -6 -o /tmp/openpc-one-image.zst "$IMAGE"
           ls -lh /tmp/openpc-one-image.zst
+
+          # Publish hashes. Previously the workflow never printed or published a
+          # hash of either file, so artifact-to-boot-log identity rested on step
+          # ordering inside a single job.
+          RAW_SHA="$(sha256sum "$IMAGE" | awk '{print $1}')"
+          ZST_SHA="$(sha256sum /tmp/openpc-one-image.zst | awk '{print $1}')"
+          RAW_SIZE="$(stat -c %s "$IMAGE")"
           echo "IMAGE_NAME=$(basename "$IMAGE")" >> "$GITHUB_ENV"
+          echo "RAW_SHA=$RAW_SHA" >> "$GITHUB_ENV"
+          echo "ZST_SHA=$ZST_SHA" >> "$GITHUB_ENV"
+          {
+            echo "### Open-PC One pilot image"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| raw file | \`$(basename "$IMAGE")\` |"
+            echo "| raw bytes | $RAW_SIZE |"
+            echo "| raw sha256 | \`$RAW_SHA\` |"
+            echo "| zst sha256 | \`$ZST_SHA\` |"
+            echo "| probe-free | yes (de-injected and byte-verified) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "raw sha256: $RAW_SHA"
+          echo "zst sha256: $ZST_SHA"
 
       - uses: actions/upload-artifact@v4
         if: success()

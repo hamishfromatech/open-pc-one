@@ -415,3 +415,93 @@ def test_session_script_marks_attention_on_display_failure():
     text = (SCRIPTS / "openpc-session").read_text()
     assert "attention" in text
     assert "--remote-debugging-address=127.0.0.1" in text
+
+
+# --- regressions found by the THE-52 review of the pilot image ---------------
+#
+# Each of these was green in CI while broken on the appliance, because nothing
+# asserted them. They are cheap, they are static, and they would have caught it.
+
+
+def _section(path: Path, section: str) -> dict[str, list[str]]:
+    """Parse a unit file into {section: [lines]}, comments dropped."""
+    out: dict[str, list[str]] = {}
+    current = None
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"^\[([A-Za-z]+)\]$", line)
+        if m:
+            current = m.group(1)
+            out.setdefault(current, [])
+            continue
+        if current:
+            out[current].append(line)
+    return out
+
+
+def test_start_limit_keys_are_in_unit_not_service():
+    """systemd ignores StartLimit* in [Service] - the cap then does not exist.
+
+    openpc-provision restarted 17 times on the pilot image because of this.
+    """
+    for unit in UNITS.glob("*.service"):
+        sections = _section(unit, "x")
+        for key in ("StartLimitIntervalSec", "StartLimitBurst"):
+            in_service = any(line.startswith(key) for line in sections.get("Service", []))
+            assert not in_service, (
+                f"{unit.name}: {key} is in [Service], where systemd ignores it; "
+                f"move it to [Unit]"
+            )
+
+
+def test_provisioning_has_a_restart_cap_in_unit():
+    sections = _section(UNITS / "openpc-provision.service", "x")
+    unit_lines = " ".join(sections.get("Unit", []))
+    assert "StartLimitBurst=" in unit_lines
+    assert "StartLimitIntervalSec=" in unit_lines
+
+
+def test_bless_boot_points_at_the_real_binary_path():
+    """/usr/bin/systemd-bless-boot does not exist on trixie; Debian ships it in
+    /usr/lib/systemd. The old leading '-' hid the miss and the unit reported
+    `active` while doing nothing."""
+    text = (UNITS / "openpc-bless.service").read_text(encoding="utf-8")
+    exec_lines = [
+        line for line in text.splitlines() if line.strip().startswith("ExecStart=")
+    ]
+    assert exec_lines, "openpc-bless has no ExecStart"
+    joined = " ".join(exec_lines)
+    assert "/usr/lib/systemd/systemd-bless-boot" in joined
+    assert "/usr/bin/systemd-bless-boot" not in joined
+    assert "ExecStart=-" not in text, (
+        "the '-' prefix hides a missing binary; the wrapper already treats a "
+        "non-boot-counted entry as a no-op"
+    )
+
+
+def test_cua_driver_uses_the_unix_socket_interface():
+    """cua-driver 0.33.3 is a unix-socket daemon. It has no --port: unknown flags
+    are silently ignored, so `--port 8098 --display :0` was parsed as a
+    positional JSON payload and the unit died on every start."""
+    text = (UNITS / "cua-driver.service").read_text(encoding="utf-8")
+    # Only the Exec lines matter; the comments explain the old broken argv.
+    execs = [
+        line.strip() for line in text.splitlines() if line.strip().startswith("Exec")
+    ]
+    joined = " ".join(execs)
+    assert "serve" in joined
+    assert "--socket" in joined
+    assert "--port" not in joined, "0.33.3 has no --port; use serve --socket"
+    assert "telemetry disable" in joined, (
+        "cua-driver ships product telemetry on by default; a sovereign appliance "
+        "must turn it off at start"
+    )
+
+
+def test_image_requirements_carry_the_ble_driver():
+    """openpc-provision imports dbus_next on the BlueZ path. It was declared only
+    as an optional extra, never shipped, and the unit failed 17 times."""
+    text = (OS.parent / "requirements-image.txt").read_text(encoding="utf-8")
+    assert "dbus-next" in text

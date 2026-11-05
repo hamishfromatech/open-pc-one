@@ -10,3 +10,9 @@ websockets==15.0.1
 cryptography==44.0.0
 cffi==2.1.1
 pycparser==3.12
+# openpc-provision imports dbus_next unconditionally on the BlueZ path
+# (services/provisioning/src/openpc_provisioning/bluez_dbus.py). It is declared
+# as the `ble` optional extra in that service's pyproject.toml but was never
+# added here, so the image venv could not import it and BLE provisioning failed
+# 17 times on the pilot boot image.
+dbus-next==0.2.3

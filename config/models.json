@@ -20,7 +20,7 @@
           "--host", "127.0.0.1",
           "--port", "8080",
           "--ctx-size", "262144",
-          "--flash-attn",
+          "--flash-attn", "on",
           "--cache-type-k", "q8_0",
           "--cache-type-v", "q8_0",
           "--threads", "4",

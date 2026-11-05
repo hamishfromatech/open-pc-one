@@ -1,5 +1,5 @@
 [Unit]
-Description=Open-PC One cua-driver (semantic desktop control, :8098)
+Description=Open-PC One cua-driver (semantic desktop control, unix socket)
 After=openpc-session.service openpc-speech.service
 Wants=openpc-session.service
 Before=openpc-engine.service
@@ -12,14 +12,24 @@ Environment=DISPLAY=:0
 Environment=HOME=/home/openpc
 # cua-driver does not ship bundled. It is pinned and baked to this path at image
 # build time so resolution can never fail at runtime.
-ExecStart=/opt/openpc/bin/cua-driver --port 8098 --display :0
+#
+# 0.33.3 is a UNIX-SOCKET daemon, not a TCP listener. It has no --port; unknown
+# flags are silently ignored, so the old `--port 8098 --display :0` argv was
+# parsed as a positional JSON payload and died with
+# `positional JSON arg to 'cua-driver 8098' did not parse`. The socket path is
+# the only interface that exists.
+ExecStart=/opt/openpc/bin/cua-driver serve --socket /run/openpc/cua-driver.sock
+# Cua Driver ships content-free product telemetry ON by default. This appliance
+# is sold as sovereign and air-gapped, so it must be off. Best-effort (-) so a
+# future CLI change cannot block the driver from starting.
+ExecStartPre=-/opt/openpc/bin/cua-driver telemetry disable
 Restart=always
 RestartSec=2
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/run/openpc /home/openpc/Desktop
+ReadWritePaths=/run/openpc /home/openpc/Desktop /home/openpc/.cache/cua-driver
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 IPAddressAllow=localhost
 
