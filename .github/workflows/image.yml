@@ -319,9 +319,10 @@ jobs:
           echo "SMOKE_VAR_MOUNTED=$(mountpoint -q /var && echo 1 || echo 0)"
           echo "SMOKE_MODELS=$(ls -1 /var/lib/openpc/models/*.gguf 2>/dev/null | wc -l)"
 
-          echo "SMOKE_FAILED_BEGIN"
-          systemctl --failed --no-legend
-          echo "SMOKE_FAILED_END"
+          # One echo, sentinels on the same line: another console writing to ttyS0
+          # mid-block would otherwise inject text that looks like a failed unit.
+          # The payload is empty when nothing has failed.
+          echo "SMOKE_FU_B$(systemctl --failed --no-legend | awk '{print $1}' | tr '\n' ',')SMOKE_FU_E"
           echo "SMOKE_END"
           sync
           systemctl poweroff -f
@@ -393,11 +394,11 @@ jobs:
             fail "one or more appliance units are failed"
           fi
 
-          # 4. The SMOKE_FAILED block must be empty. It was never asserted before,
-          #    and it was not empty.
-          blocked=$(awk '/SMOKE_FAILED_BEGIN/{f=1;next} /SMOKE_FAILED_END/{f=0} f' /tmp/serial.log \
-                     | tr -d '[:space:]')
-          [ -z "$blocked" ] || fail "systemctl --failed reported units: $blocked"
+          # 4. Nothing failed. Parsed from a single-line sentinel so unrelated
+          #    console traffic cannot masquerade as a failed unit.
+          failed_units=$(sed -n 's/.*SMOKE_FU_B\(.*\)SMOKE_FU_E.*/\1/p' /tmp/serial.log \
+                           | tr -d ', ' | tail -1)
+          [ -z "$failed_units" ] || fail "systemctl --failed reported units: $failed_units"
 
           # 5. Listener sockets. 8095 is the engine (WSS), 8080 is llama.cpp.
           grep -qE 'SMOKE_PORT_8095=[1-9]' /tmp/serial.log || fail "engine is not listening on 8095"
