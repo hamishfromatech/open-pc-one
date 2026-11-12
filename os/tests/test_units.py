@@ -216,6 +216,25 @@ def test_chrome_profile_lives_on_tmpfs_and_precedes_the_session():
     assert "openpc-session.service" in dependencies(mount, "Unit.Before")
 
 
+def test_session_creates_the_x11_socket_dir_in_its_private_tmp():
+    # PrivateTmp=yes means the real /tmp/.X11-unix is not visible, and Xvfb will
+    # not create the directory as a non-root user.
+    session = UNITS / "openpc-session.service"
+    assert "yes" == directive(session, "Service.PrivateTmp")
+    pre = values(session, "Service.ExecStartPre")
+    assert any("/tmp/.X11-unix" in value for value in pre), pre
+
+
+def test_session_and_cua_driver_share_one_dbus_address():
+    # dbus-launch writes $HOME/.dbus, which is read-only, so Chrome failed every
+    # bus call. The session owns a fixed socket and cua-driver joins it.
+    session = (SCRIPTS / "openpc-session").read_text()
+    assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/dbus/session-bus"' in session
+    assert "dbus-daemon --session --fork" in session
+    cua = (UNITS / "cua-driver.service").read_text()
+    assert "/run/openpc/chrome/dbus/session-bus" in cua
+
+
 def test_hardware_watchdog_and_timeouts_are_configured():
     # systemd only reads these under [Manager]. The pilot image wrote them with
     # no section header, so journald logged "Assignment outside of section.

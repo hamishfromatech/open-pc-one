@@ -20,6 +20,10 @@ Environment=XDG_CACHE_HOME=/run/openpc/chrome/cache
 Environment=XDG_CONFIG_HOME=/run/openpc/chrome/config
 RuntimeDirectory=openpc/chrome
 RuntimeDirectoryMode=0700
+# PrivateTmp=yes gives the unit an empty /tmp, and Xvfb refuses to create
+# /tmp/.X11-unix as a non-root user ("_XSERVTransmkdir: ERROR: euid != 0").
+# The '+' runs this as root inside the unit's own mount namespace.
+ExecStartPre=+/usr/bin/install -d -m 1777 /tmp/.X11-unix
 ExecStart=/opt/openpc/bin/openpc-session
 Restart=always
 RestartSec=2

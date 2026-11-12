@@ -15,6 +15,8 @@ Environment=DISPLAY=:0
 #   Read-only file system (os error 30)
 # so give the daemon its own writable home (created by tmpfiles.d/openpc.conf).
 Environment=HOME=/var/lib/openpc/cua-driver
+# Match the session's fixed bus socket (see os/scripts/openpc-session).
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/openpc/chrome/dbus/session-bus
 # cua-driver does not ship bundled. It is pinned and baked to this path at image
 # build time so resolution can never fail at runtime.
 #
@@ -24,6 +26,9 @@ Environment=HOME=/var/lib/openpc/cua-driver
 # `positional JSON arg to 'cua-driver 8098' did not parse`. The socket path is
 # the only interface that exists.
 ExecStart=/opt/openpc/bin/cua-driver serve --socket /run/openpc/cua-driver.sock
+# The session bus is created by openpc-session; wait briefly for its socket so
+# the AT-SPI listener is not disabled for the lifetime of the daemon.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 100); do [ -S /run/openpc/chrome/dbus/session-bus ] && exit 0; sleep 0.1; done; exit 0'
 # Cua Driver ships content-free product telemetry ON by default. This appliance
 # is sold as sovereign and air-gapped, so it must be off. Best-effort (-) so a
 # future CLI change cannot block the driver from starting.
