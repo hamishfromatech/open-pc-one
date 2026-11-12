@@ -217,9 +217,40 @@ def test_chrome_profile_lives_on_tmpfs_and_precedes_the_session():
 
 
 def test_hardware_watchdog_and_timeouts_are_configured():
-    postinst = (OS / "image" / "mkosi.postinst").read_text()
-    assert "RuntimeWatchdogSec=30s" in postinst
-    assert "DefaultTimeoutStartSec=45s" in postinst
+    # systemd only reads these under [Manager]. The pilot image wrote them with
+    # no section header, so journald logged "Assignment outside of section.
+    # Ignoring." and the watchdog was silently never armed.
+    path = OS / "overlay" / "etc" / "systemd" / "system.conf.d" / "openpc.conf"
+    text = path.read_text()
+    assert text.lstrip().startswith("[Manager]")
+    assert "RuntimeWatchdogSec=30s" in text
+    assert "RebootWatchdogSec=2min" in text
+    assert "DefaultTimeoutStartSec=45s" in text
+
+
+def test_every_systemd_dropin_declares_a_section():
+    """A directive outside a [Section] is ignored with only a journal warning."""
+    for path in sorted((OS / "overlay" / "etc" / "systemd").rglob("*.conf")):
+        first = ""
+        for line in path.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                first = line
+                break
+        assert first.startswith("[") and first.endswith("]"), f"{path}: no section header"
+
+
+def test_cua_driver_home_is_writable_for_the_telemetry_marker():
+    # cua-driver writes $HOME/.cua-driver when telemetry is disabled. ProtectHome
+    # is read-only, so HOME must be a path the unit can write and tmpfiles must
+    # create it before the unit starts.
+    unit = UNITS / "cua-driver.service"
+    env = values(unit, "Service.Environment")
+    home_value = next(v.split("=", 1)[1] for v in env if v.startswith("HOME="))
+    assert home_value != "/home/openpc"
+    assert home_value in dependencies(unit, "Service.ReadWritePaths")
+    tmpfiles = (OS / "overlay" / "etc" / "tmpfiles.d" / "openpc.conf").read_text()
+    assert home_value in tmpfiles
 
 
 # ---------------------------------------------------------------------------

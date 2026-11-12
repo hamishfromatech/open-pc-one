@@ -1,5 +1,8 @@
 # os/ - the appliance image
 
+For the end-to-end procedure - build a clean clone, boot the raw image in QEMU,
+and read the expected serial output - see [BOOT.md](BOOT.md).
+
 Everything here is config that ends up inside the image, plus the scripts the
 image installs to `/opt/openpc/bin`.
 

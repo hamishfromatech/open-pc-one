@@ -68,7 +68,13 @@ def _classes() -> dict[str, Any]:
             super().__init__("org.bluez.GattCharacteristic1")
             self._uuid = uuid
             self._flags = flags
-            self._value = list(value)
+            # D-Bus signature "ay" is an ARRAY of BYTE, which dbus-next only
+            # serialises from Python bytes. The pilot image stored a list here,
+            # so every InterfacesAdded signal for this characteristic logged
+            #   SignatureBodyMismatchError: DBus ARRAY type "a" with BYTE child
+            #   must be Python type "bytes", got <class 'list'>
+            # and dropped the Value property. Keep the wire type from end to end.
+            self._value = value
             self._notifying = False
             self.on_read: Callable[[], bytes] | None = None
             self.on_write: Callable[[bytes], None] | None = None
@@ -94,7 +100,7 @@ def _classes() -> dict[str, Any]:
         @method()
         def ReadValue(self, options: "a{sv}") -> "ay":
             if self.on_read is not None:
-                self._value = list(self.on_read())
+                self._value = bytes(self.on_read())
             return self._value
 
         @method()
@@ -112,7 +118,7 @@ def _classes() -> dict[str, Any]:
 
         # -- notify
         def notify(self, value: bytes) -> None:
-            self._value = list(value)
+            self._value = bytes(value)
             if self._notifying:
                 self.emit_properties_changed({"Value": self._value})
 

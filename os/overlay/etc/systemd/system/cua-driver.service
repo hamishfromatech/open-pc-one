@@ -9,7 +9,12 @@ Type=simple
 User=openpc
 Group=openpc
 Environment=DISPLAY=:0
-Environment=HOME=/home/openpc
+# The root filesystem is read-only. cua-driver creates $HOME/.cua-driver when it
+# is asked to turn telemetry off, and the pilot image logged
+#   cua-driver: failed to disable telemetry: ... /home/openpc/.cua-driver:
+#   Read-only file system (os error 30)
+# so give the daemon its own writable home (created by tmpfiles.d/openpc.conf).
+Environment=HOME=/var/lib/openpc/cua-driver
 # cua-driver does not ship bundled. It is pinned and baked to this path at image
 # build time so resolution can never fail at runtime.
 #
@@ -31,7 +36,7 @@ ProtectSystem=strict
 ProtectHome=read-only
 # A leading dash makes a missing path non-fatal. Without it systemd fails the
 # whole unit with 226/NAMESPACE before it ever execs the binary.
-ReadWritePaths=/run/openpc /home/openpc/Desktop -/home/openpc/.cache/cua-driver
+ReadWritePaths=/run/openpc /home/openpc/Desktop /var/lib/openpc/cua-driver
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 IPAddressAllow=localhost
 

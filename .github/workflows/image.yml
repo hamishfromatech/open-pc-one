@@ -164,8 +164,12 @@ jobs:
 
           # System-wide, not --user: the build runs under sudo, whose HOME is
           # /root, so a user install under /home/runner/.local is not importable.
+          # Pin the commit behind v25.3, not the tag: a tag can be moved and
+          # then the same workflow builds a different image on another day.
+          # v25.3 = tag object a31ed1fc8c6901ae3ee40d458761e261adca835e,
+          # commit 54c625c380ef5500f17460981a3c67b109b6a847.
           sudo python3 -m pip install --break-system-packages \
-            "git+https://github.com/systemd/mkosi@v25.3"
+            "git+https://github.com/systemd/mkosi@54c625c380ef5500f17460981a3c67b109b6a847"
           mkosi --version
           systemd-repart --version | head -1
 
@@ -499,7 +503,9 @@ jobs:
           name: openpc-one-pilot-image
           path: /tmp/openpc-one-image.zst
           if-no-files-found: error
-          retention-days: 14
+          # A tester may not download on the day CI finishes. 90 days is the
+          # longest retention GitHub allows for a public repository artifact.
+          retention-days: 90
 
       - uses: actions/upload-artifact@v4
         if: always()

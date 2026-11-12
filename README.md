@@ -59,10 +59,10 @@ PYTHONPATH=services/engine/src ./.venv/bin/python -m openpc_engine \
 
 | Port | Service |
 |---|---|
-| 8095 | `openpc-engine` — WSS bridge to the agent |
-| 8090 | Open-PC agent server — MJPEG stream and REST |
-| 8098 | `cua-driver` — semantic desktop control |
-| 8096 | speech service — ASR/TTS, loopback only |
+| 8095 | `openpc-engine` - WSS bridge to the agent |
+| 8090 | Open-PC agent server - MJPEG stream and REST |
+| socket | `cua-driver` - `/run/openpc/cua-driver.sock` (no TCP port) |
+| 8096 | speech service - ASR/TTS, loopback only |
 
 ## Layout
 
