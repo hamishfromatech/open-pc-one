@@ -28,6 +28,12 @@ trap cleanup EXIT TERM INT
 mkdir -p "$XDG_RUNTIME_DIR" "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" \
   "$CHROME_USER_DIR" "$XDG_RUNTIME_DIR/dbus"
 
+# Xvfb and the ICE protocol refuse to create these directories when euid is not
+# 0, and PrivateTmp=yes means the image's /usr/lib/tmpfiles.d/x11.conf entry is
+# not visible here. The service owns its private /tmp, so create them first.
+mkdir -p /tmp/.X11-unix /tmp/.ICE-unix
+chmod 1777 /tmp/.X11-unix /tmp/.ICE-unix
+
 # XFCE and Chrome need a session bus. Relying on dbus-launch is not enough: it
 # writes $HOME/.dbus, the root filesystem is read-only, and Chrome then fails
 # every bus call with "Could not parse server address". A fixed socket path also

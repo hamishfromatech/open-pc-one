@@ -217,12 +217,13 @@ def test_chrome_profile_lives_on_tmpfs_and_precedes_the_session():
 
 
 def test_session_creates_the_x11_socket_dir_in_its_private_tmp():
-    # PrivateTmp=yes means the real /tmp/.X11-unix is not visible, and Xvfb will
-    # not create the directory as a non-root user.
+    # PrivateTmp=yes means the image's tmpfiles entry is not visible, and Xvfb
+    # will not create the directory as a non-root user.
     session = UNITS / "openpc-session.service"
     assert "yes" == directive(session, "Service.PrivateTmp")
-    pre = values(session, "Service.ExecStartPre")
-    assert any("/tmp/.X11-unix" in value for value in pre), pre
+    script = (SCRIPTS / "openpc-session").read_text()
+    assert "/tmp/.X11-unix" in script
+    assert "/tmp/.ICE-unix" in script
 
 
 def test_session_and_cua_driver_share_one_dbus_address():
@@ -384,7 +385,16 @@ def test_image_has_no_console():
 
 def test_image_ships_required_runtime_packages_only():
     conf = (OS / "image" / "mkosi.conf").read_text()
-    for package in ("bluez", "network-manager", "avahi-daemon", "nftables", "xvfb", "chromium"):
+    for package in (
+        "bluez",
+        "network-manager",
+        "avahi-daemon",
+        "nftables",
+        "xvfb",
+        "chromium",
+        # cua-driver's AT-SPI listener needs org.a11y.Bus.
+        "at-spi2-core",
+    ):
         assert package in conf
     for compiler in ("gcc", "build-essential", "g++"):
         assert compiler not in conf, f"{compiler} has no place on an appliance"
