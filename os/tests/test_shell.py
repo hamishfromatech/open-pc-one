@@ -48,3 +48,34 @@ def test_gtk_defaults_name_the_brand_fonts_and_icons():
     settings = GTK.read_text()
     assert "gtk-font-name=Inter" in settings
     assert "gtk-icon-theme-name=Papirus" in settings
+
+
+def test_the_launcher_reads_real_desktop_entries():
+    source = SHELL.read_text()
+    # A launcher that hard-codes an app list is a mock. It must read the entries
+    # the system installs, skip ones for software that is not present, and drop
+    # field codes (a %U left in argv makes the launch a silent no-op).
+    assert "/usr/share/applications" in source
+    assert "NoDisplay" in source and "Hidden" in source
+    assert "FIELD_CODES" in source and "shutil.which(argv[0])" in source
+
+
+def test_the_wordmark_opens_the_launcher():
+    source = SHELL.read_text()
+    assert 'word.connect("clicked"' in source
+    assert "self.launcher.toggle" in source
+    assert "Gdk.KEY_Escape" in source, "an overlay with no way out is a trap"
+
+
+def test_the_stylesheet_only_uses_properties_gtk_understands():
+    # GTK's CSS is not web CSS: a single unsupported property makes
+    # CssProvider.load_from_data() raise, and the whole shell fails to start (it
+    # happened with text-transform, which took the bar and dock down with it).
+    import re
+
+    css = re.search(r'BAR_CSS = f"""(.*?)"""', SHELL.read_text(), re.DOTALL)
+    assert css, "the stylesheet is a BAR_CSS string"
+    forbidden = ("text-transform", "display: flex", "display: grid", "flex-direction",
+                 "justify-content", "align-items: center;}")  # last one is a typo guard
+    for prop in forbidden:
+        assert prop not in css.group(1), f"{prop} is not valid GTK CSS"

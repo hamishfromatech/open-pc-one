@@ -18,10 +18,12 @@ the rounded dock, without one it falls back to flat cream.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import gi
 
@@ -119,6 +121,29 @@ window {{ background: transparent; }}
 .dock button:hover {{ background: rgba(228,214,202,0.75); }}
 .dock .running {{ background: {RED}; border-radius: 2px; min-width: 4px; min-height: 4px; }}
 .label {{ color: {MUTED}; font-size: 10.5px; }}
+
+/* ---- launcher (click the wordmark) ---------------------------------- */
+.spot {{
+  background: {CREAM}; border: 1px solid {HAIR}; border-radius: 18px; padding: 14px;
+}}
+.spot entry {{
+  background: {CREAM_SOLID}; border: 1px solid {HAIR}; border-radius: 12px;
+  padding: 12px 14px; font-size: 16px; color: {INK};
+}}
+.spot entry:focus {{ border-color: {RED}; box-shadow: 0 0 0 3px rgba(215,46,53,0.12); }}
+.spot .head {{ color: {MUTED}; font-size: 10.5px; letter-spacing: 0.16em;
+  padding: 14px 6px 6px 6px; }}
+.spot .result {{
+  border-radius: 10px; padding: 9px 10px; color: {INK}; font-size: 13.5px;
+}}
+.spot .result.on {{ background: rgba(215,46,53,0.10); }}
+.spot row:selected, .spot .result:selected {{ background: rgba(215,46,53,0.14); }}
+.spot row:selected label {{ color: {INK}; }}
+/* Same colour as the panel: with a compositor the rounded panel floats, and
+   without one the window behind it is the same cream instead of black. */
+window {{ background: {CREAM_SOLID}; }}
+.spot .result .sub {{ color: {MUTED}; font-size: 11.5px; }}
+.spot .hint {{ color: {MUTED}; font-size: 11px; padding: 10px 6px 0 6px; }}
 """
 
 
@@ -145,6 +170,7 @@ class Shell:
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+        self.launcher = Launcher()
         self.bar = self._bar()
         self.dock = self._dock()
 
@@ -175,8 +201,17 @@ class Shell:
         self.rule = Gtk.Box()
         self.rule.get_style_context().add_class("rule")
         self.rule.set_valign(Gtk.Align.CENTER)
-        word = Gtk.Label(label="AmaaraOS")
-        word.get_style_context().add_class("wordmark")
+        # The wordmark is the menu button, the way a desktop's own mark is: one
+        # click, one place to search everything.
+        word = Gtk.Button()
+        word.set_relief(Gtk.ReliefStyle.NONE)
+        word.set_focus_on_click(False)
+        label = Gtk.Label(label="AmaaraOS")
+        label.get_style_context().add_class("wordmark")
+        word.add(label)
+        word.set_tooltip_text("Search apps and system")
+        word.connect("clicked", lambda _b: self.launcher.toggle(self))
+        self.word_button = word
 
         self.app_label = Gtk.Label(label="")
         self.app_label.get_style_context().add_class("app")
@@ -261,6 +296,183 @@ class Shell:
         return True
 
 
+#: Where desktop entries live. Order matters: /usr/local wins over the
+#: distribution's, and a user's own wins over both, like every other desktop.
+ENTRY_DIRS = (
+    "/usr/local/share/applications",
+    "/usr/share/applications",
+    os.path.expanduser("~/.local/share/applications"),
+)
+
+#: Launching an app with a field code left in its Exec line is a silent no-op, so
+#: those tokens are dropped rather than passed through.
+FIELD_CODES = ("%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N", "%i", "%c", "%k", "%v", "%m")
+
+
+def _desktop_field(text: str, key: str) -> str:
+    """Read ``key=value`` out of the [Desktop Entry] section."""
+    section = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("["):
+            section = line.strip("[]")
+            continue
+        if section == "Desktop Entry" and line.startswith(key + "="):
+            return line.split("=", 1)[1].strip()
+    return ""
+
+
+def desktop_entries() -> list[tuple[str, str, list[str]]]:
+    """(name, comment, argv) for every launchable application on the box."""
+    seen: set[str] = set()
+    found: list[tuple[str, str, list[str]]] = []
+    for directory in ENTRY_DIRS:
+        if not os.path.isdir(directory):
+            continue
+        for filename in sorted(os.listdir(directory)):
+            if not filename.endswith(".desktop") or filename in seen:
+                continue
+            seen.add(filename)
+            try:
+                text = Path(os.path.join(directory, filename)).read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if _desktop_field(text, "NoDisplay").lower() == "true":
+                continue
+            if _desktop_field(text, "Hidden").lower() == "true":
+                continue
+            label = _desktop_field(text, "Name")
+            command = _desktop_field(text, "Exec")
+            if not label or not command:
+                continue
+            argv = [token for token in shlex.split(command) if token not in FIELD_CODES]
+            if not argv or shutil.which(argv[0]) is None:
+                continue  # an entry for software that is not installed
+            found.append((label, _desktop_field(text, "Comment"), argv))
+    return found
+
+
+class Launcher(Gtk.Window):
+    """A search overlay: type, arrow, Enter.
+
+    The dock is the four things that matter on this box; this is everything else
+    that is installed, which is what a person expects from a desktop's own mark.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.set_decorated(False)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_keep_above(True)
+        self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+        self.set_resizable(False)
+        self.set_app_paintable(True)
+        screen = self.get_screen()
+        visual = screen.get_rgba_visual()
+        if visual is not None and screen.is_composited():
+            self.set_visual(visual)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        outer.get_style_context().add_class("spot")
+
+        self.entry = Gtk.Entry()
+        self.entry.set_placeholder_text("Search apps and system…")
+        outer.pack_start(self.entry, False, False, 0)
+
+        self.head = Gtk.Label(label="Applications")
+        self.head.set_xalign(0)
+        self.head.get_style_context().add_class("head")
+        outer.pack_start(self.head, False, False, 0)
+
+        self.list = Gtk.ListBox()
+        self.list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_max_content_height(340)
+        scroller.set_propagate_natural_height(True)
+        scroller.add(self.list)
+        outer.pack_start(scroller, True, True, 0)
+
+        hint = Gtk.Label(label="Up/Down choose      Enter open      Esc close")
+        hint.set_xalign(0)
+        hint.get_style_context().add_class("hint")
+        outer.pack_start(hint, False, False, 0)
+
+        self.add(outer)
+        self.entries = desktop_entries()
+        self.results: list[tuple[str, list[str]]] = []
+
+        self.entry.connect("changed", self._filter)
+        self.entry.connect("activate", self._open_selected)
+        self.connect("key-press-event", self._on_key)
+        self.list.connect("row-activated", self._on_row)
+        self._filter()
+
+    # -- behaviour ---------------------------------------------------------
+
+    def _filter(self, *_args) -> None:
+        needle = self.entry.get_text().strip().lower()
+        self.results = []
+        for child in self.list.get_children():
+            self.list.remove(child)
+        for name, comment, argv in self.entries:
+            haystack = f"{name} {comment or ''}".lower()
+            if needle and needle not in haystack:
+                continue
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            title = Gtk.Label(label=name)
+            title.set_xalign(0)
+            box.pack_start(title, False, False, 0)
+            if comment:
+                sub = Gtk.Label(label=comment[:70])
+                sub.set_xalign(0)
+                sub.get_style_context().add_class("sub")
+                box.pack_start(sub, True, True, 0)
+            row.add(box)
+            row.get_style_context().add_class("result")
+            self.list.add(row)
+            self.results.append((name, argv))
+            if len(self.results) >= 60:
+                break
+        self.head.set_text(f"Applications · {len(self.results)}" if needle else "Applications")
+        first = self.list.get_row_at_index(0)
+        if first is not None:
+            self.list.select_row(first)
+
+    def _on_key(self, _widget, event) -> bool:
+        if event.keyval == Gdk.KEY_Escape:
+            self.hide()
+            return True
+        return False
+
+    def _on_row(self, _list, row) -> None:
+        index = row.get_index()
+        if 0 <= index < len(self.results):
+            self.hide()
+            launch(self.results[index][1])
+
+    def _open_selected(self, *_args) -> None:
+        row = self.list.get_selected_row()
+        if row is not None:
+            self._on_row(self.list, row)
+
+    def toggle(self, _relative_to: Gtk.Window | None = None) -> None:
+        if self.get_visible():
+            self.hide()
+            return
+        self.entries = desktop_entries()
+        self.entry.set_text("")
+        self._filter()
+        self.show_all()
+        width = 620
+        self.resize(width, min(520, screen_height() - 160))
+        self.move((screen_width() - width) // 2, max(60, screen_height() // 6))
+        self.present()
+        self.entry.grab_focus()
+
+
 def screen_width() -> int:
     return Gdk.Display.get_default().get_primary_monitor().get_geometry().width
 
@@ -309,8 +521,12 @@ def _focused_window() -> str:
                                 text=True, timeout=2).stdout.strip()
         if not window:
             return ""
-        return subprocess.run(["xdotool", "getwindowname", window], capture_output=True,
-                              text=True, timeout=2).stdout.strip()[:60]
+        name = subprocess.run(["xdotool", "getwindowname", window], capture_output=True,
+                              text=True, timeout=2).stdout.strip()
+        # Our own surfaces are not "an app": the bar must not answer itself.
+        if name.startswith("amaara-shell"):
+            return ""
+        return name[:60]
     except (OSError, subprocess.SubprocessError):
         return ""
 

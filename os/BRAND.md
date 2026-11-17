@@ -105,7 +105,7 @@ desktop that moves when you did not move it is a toy.
 | Lock / login screen | **missing** — a real OS has one even with no password |
 | Settings app | **missing** — `xfce4-settings-manager` is a placeholder, not our UI |
 | Notification centre, OSD for volume/brightness | **missing** |
-| App launcher / search (Spotlight-equivalent) | **missing** — the dock is static |
+| App launcher / search (`amaara-shell`) | built — click the wordmark; reads real `.desktop` entries |
 | Window snapping + workspace gesture | xfwm4 defaults only |
 
 ## Verified against upstream, not assumed
