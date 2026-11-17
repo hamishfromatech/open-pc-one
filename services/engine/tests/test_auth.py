@@ -139,3 +139,23 @@ def test_tls_identity_is_stable_and_private(tmp_path):
     assert stat.S_IMODE(os.stat(key).st_mode) == 0o600
     assert ":" in format_fingerprint(first)
     assert format_fingerprint(first).replace(":", "").lower() == first
+
+
+def test_pairing_store_reads_a_code_minted_by_another_process(tmp_path):
+    """``pair-code`` runs in its own process while ``serve`` keeps running."""
+    path = tmp_path / "pairing.json"
+    serving = PairingCodeStore(ttl=600.0, path=path)  # loaded at service start
+    minted, _ = PairingCodeStore(ttl=600.0, path=path).mint()  # the CLI, elsewhere
+
+    assert serving.redeem(minted), "a long-running store must re-read the file"
+    assert not serving.redeem(minted), "codes stay single-use"
+
+
+def test_pairing_store_forgets_a_code_burnt_by_another_process(tmp_path):
+    path = tmp_path / "pairing.json"
+    serving = PairingCodeStore(ttl=600.0, path=path)
+    minted, _ = PairingCodeStore(ttl=600.0, path=path).mint()
+
+    assert PairingCodeStore(ttl=600.0, path=path).redeem(minted)
+
+    assert not serving.redeem(minted), "another process already burnt it"

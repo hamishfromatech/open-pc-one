@@ -272,24 +272,50 @@ class PairingCodeStore:
         self.length = length
         self.path = Path(path) if path is not None else None
         self._codes: dict[str, _PairingCode] = {}
+        #: (mtime_ns, size) of the store as last read or written by this process.
+        #: ``pair-code`` mints from a *different* process while ``serve`` keeps
+        #: running, so the file must be re-read, not read once at start-up.
+        self._stamp: tuple[int, int] | None = None
         self._load()
 
     # -- persistence -------------------------------------------------------
 
     def _load(self) -> None:
-        if self.path is None or not self.path.exists():
+        if self.path is None:
             return
+        try:
+            stat = self.path.stat()
+        except OSError:
+            # No store on disk: nothing has been minted, or another process
+            # redeemed the last code and deleted the file.
+            self._codes.clear()
+            self._stamp = None
+            return
+        self._stamp = (stat.st_mtime_ns, stat.st_size)
         try:
             raw = json.loads(self.path.read_text())
         except (json.JSONDecodeError, OSError):
             log.warning("ignoring unreadable pairing store")
             return
+        self._codes.clear()
         for code, item in raw.get("codes", {}).items():
             try:
                 self._codes[code] = _PairingCode(**item)
                 register_secret(code)
             except TypeError:
                 continue
+
+    def _reload_if_changed(self) -> None:
+        """Re-read the store when another process minted or burnt a code."""
+        if self.path is None:
+            return
+        try:
+            stat = self.path.stat()
+            stamp = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            stamp = None
+        if stamp != self._stamp:
+            self._load()
 
     def _save(self) -> None:
         if self.path is None:
@@ -304,6 +330,11 @@ class PairingCodeStore:
         finally:
             os.close(fd)
         os.replace(tmp, self.path)
+        try:
+            stat = self.path.stat()
+            self._stamp = (stat.st_mtime_ns, stat.st_size)
+        except OSError:  # pragma: no cover - the write just succeeded
+            self._stamp = None
 
     # -- operations --------------------------------------------------------
 
@@ -319,6 +350,7 @@ class PairingCodeStore:
 
     def redeem(self, code: str) -> bool:
         """Burn a code. Comparison is constant-time and case-insensitive."""
+        self._reload_if_changed()
         self._prune()
         candidate = (code or "").strip().upper()
         if not candidate:

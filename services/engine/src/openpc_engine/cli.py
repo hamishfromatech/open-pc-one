@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -25,9 +26,17 @@ def _config_from_args(args: argparse.Namespace) -> EngineConfig:
             state_dir=root,
             session_root=root / "sessions",
             devices_file=root / "devices.json",
+            # Must move with the root: `pair-code` mints through this path and
+            # the running `serve` reads it, so a half-mapped root means a code
+            # nobody ever sees.
+            pairing_file=root / "pairing.json",
             tls_cert=root / "tls" / "engine.crt",
             tls_key=root / "tls" / "engine.key",
         )
+        if os.geteuid() != 0:
+            # /run/openpc is the appliance's tmpfs contract, shared with the LED
+            # service; a non-root --state-dir keeps its flags inside the root.
+            config.run_dir = root / "run"
     if getattr(args, "bind", None):
         host, _, port = args.bind.rpartition(":")
         if host:
