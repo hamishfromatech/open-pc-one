@@ -538,7 +538,9 @@ class LockScreen(Gtk.Window):
     def lock(self) -> None:
         if self.on_lock is not None:
             self.on_lock()
+        self.set_opacity(0.0)
         self.show_all()
+        animate(self, opacity=1.0, duration=200)
         # The bar and the dock are keep-above too, so "on top" is decided by X
         # stacking order: raise again once the window is mapped, or the cover
         # comes up *behind* the shell it is supposed to hide.
@@ -747,8 +749,11 @@ class Launcher(Gtk.Window):
             else:
                 launch(argv)
 
+    def _dismiss(self) -> None:
+        animate(self, opacity=0.0, duration=90, on_done=self.hide)
+
     def _on_focus_out(self, *_args) -> bool:
-        self.hide()
+        self._dismiss()
         return False
 
     def _on_key(self, _widget, event) -> bool:
@@ -774,7 +779,7 @@ class Launcher(Gtk.Window):
 
     def toggle(self, _relative_to: Gtk.Window | None = None) -> None:
         if self.get_visible():
-            self.hide()
+            self._dismiss()
             return
         self.entries = desktop_entries()
         self.entry.set_text("")
@@ -785,6 +790,43 @@ class Launcher(Gtk.Window):
         self.move((screen_width() - width) // 2, max(60, screen_height() // 6))
         self.present()
         self.entry.grab_focus()
+        animate(self, y=max(60, screen_height() // 6 - 18), duration=120)
+
+
+
+def animate(window: Gtk.Window, *, x: int | None = None, y: int | None = None,
+            opacity: float | None = None, duration: int = 160, on_done=None) -> None:
+    """Step a window to a new position/opacity, then call on_done.
+
+    Position is used rather than a compositor effect because it works with or
+    without compositing, and a panel that slides is the part a person notices.
+    """
+    start_x, start_y = window.get_position()
+    target_x = start_x if x is None else x
+    target_y = start_y if y is None else y
+    start_opacity = window.get_opacity()
+    target_opacity = start_opacity if opacity is None else opacity
+    steps = 8
+    interval = max(1, duration // steps)
+
+    def step(index: int) -> bool:
+        fraction = index / steps
+        # ease-out: most of the distance in the first half of the time
+        eased = 1 - (1 - fraction) ** 2
+        window.move(
+            int(start_x + (target_x - start_x) * eased),
+            int(start_y + (target_y - start_y) * eased),
+        )
+        if start_opacity != target_opacity:
+            window.set_opacity(start_opacity + (target_opacity - start_opacity) * eased)
+        if index >= steps:
+            if on_done is not None:
+                on_done()
+            return False
+        GLib.timeout_add(interval, step, index + 1)
+        return False
+
+    step(0)
 
 
 class Notification:
@@ -932,7 +974,7 @@ class Centre(Gtk.Window):
 
     def toggle(self) -> None:
         if self.get_visible():
-            self.hide()
+            animate(self, x=screen_width(), duration=120, on_done=self.hide)
             return
         self.refresh()
         self.show_all()
@@ -944,8 +986,11 @@ class Centre(Gtk.Window):
         height = min(screen_height() - 110, 120 + cards * 92)
         self.set_size_request(width, height)
         self.resize(width, height)
-        self.move(screen_width() - width - 14, 40)
+        final_x, final_y = screen_width() - width - 14, 40
+        # arrive from off-screen, the way a panel attached to an edge should
+        self.move(screen_width(), final_y)
         self.present()
+        animate(self, x=final_x, duration=160)
         self.store.mark_read()
 
 
@@ -984,14 +1029,19 @@ class Osd(Gtk.Window):
         width, height = max(240, self.get_size()[0]), 64
         self.set_size_request(width, height)
         self.resize(width, height)
-        self.move((screen_width() - width) // 2, screen_height() - 150)
+        target = screen_height() - 150
+        self.move((screen_width() - width) // 2, target + 26)
+        animate(self, y=target, duration=140)
         if self._timer is not None:
             GLib.source_remove(self._timer)
         self._timer = GLib.timeout_add(int(seconds * 1000), self._hide)
 
     def _hide(self) -> bool:
         self._timer = None
-        self.hide()
+        current_x = self.get_position()[0]
+        animate(self, y=screen_height() - 118, opacity=0.0, duration=120,
+                on_done=self.hide)
+        self.move(current_x, self.get_position()[1])
         return False
 
 

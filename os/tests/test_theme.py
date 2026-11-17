@@ -154,3 +154,22 @@ def test_the_generator_and_the_committed_themerc_agree():
     spec.loader.exec_module(module)
     committed = (THEME / "themerc").read_text(encoding="utf-8").strip()
     assert module.THEMERC.strip() == committed
+
+
+def test_window_shortcuts_are_declared_with_real_xfwm4_key_names():
+    # The ids are xfwm4's own shortcut names (checked against the binary); a typo
+    # is silent - the shortcut simply never fires.
+    tree = ET.parse(XFCONF / "xfwm4.xml").getroot()
+    keys = {
+        node.get("name"): node.get("value")
+        for node in tree.iter("property")
+        if node.get("name", "").endswith("_key")
+    }
+    assert keys["tile_left_key"] == "<Super>Left"
+    assert keys["tile_right_key"] == "<Super>Right"
+    assert keys["show_desktop_key"] == "<Super>d"
+    assert keys["close_window_key"] == "<Super>w"
+    # Shortcuts stay the user's: only the chrome is locked.
+    for node in tree.iter("property"):
+        if node.get("name", "").endswith("_key"):
+            assert node.get("locked") is None, "a shortcut must be changeable"

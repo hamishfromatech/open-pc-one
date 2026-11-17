@@ -106,7 +106,7 @@ desktop that moves when you did not move it is a toy.
 | Settings app (`amaara-settings`) | built — 7 panes reading the running system |
 | Notification centre (`org.freedesktop.Notifications` server) + OSD | built — clock opens it; apps notify it |
 | App launcher / search (`amaara-shell`) | built — click the wordmark; reads real `.desktop` entries |
-| Window snapping + workspace gesture | xfwm4 defaults only |
+| Window snapping / tiling + workspace keys | configured (`Super`+arrows, `Super+W/F/D`, workspace paging) — E2E key test needs hardware |
 
 ## Verified against upstream, not assumed
 
@@ -169,3 +169,18 @@ font stack and the WM are fine, and the difference is inside the theme.
 Next attempt should not start from a generator: copy `Default`'s XPM set, replace
 its colours with ours, and confirm text renders before re-deriving the design. If
 that works, the missing piece is visible by diffing the two colour tables.
+
+### Motion
+
+Four surfaces move, and only these four: the launcher drops in (120 ms), the
+notification centre slides in from its edge (160 ms) and back out (120 ms), the
+OSD rises and falls (140/120 ms), and the lock cover fades up (200 ms). One axis,
+ease-out, no bounce, never while idle.
+
+Implemented with window geometry plus opacity rather than a compositor effect, so
+the slides work even without compositing and the fades simply do nothing there —
+the correct failure mode for decoration. **Verified**: the centre's off-screen
+start position and its settled position. **Not verified in the container**: the
+opacity fades, because there is no compositor to apply them (the appliance has
+one), and the keyboard tiling shortcuts, because a kiosk browser session has no
+keyboard to press them with.

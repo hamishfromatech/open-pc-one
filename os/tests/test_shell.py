@@ -131,7 +131,10 @@ def test_the_launcher_dismisses_when_focus_leaves_but_the_lock_does_not():
     # launcher bug; a lock screen that dismisses when it loses focus is worse.
     assert "_on_focus_out" in launcher
     assert "_on_focus_out" not in lock
-    assert "self.hide()" in launcher.split("def _on_focus_out")[1].split("def ")[0]
+    # It now dismisses through _dismiss(), which animates out and then hides -
+    # the assertion is about the behaviour, not the call site.
+    assert "self._dismiss()" in launcher.split("def _on_focus_out")[1].split("def ")[0]
+    assert "on_done=self.hide" in launcher
 
 
 def test_settings_never_renders_an_empty_separator():

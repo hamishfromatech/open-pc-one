@@ -22,5 +22,21 @@
     <property name="snap_to_border" type="bool" value="true"/>
     <property name="tile_on_move" type="bool" value="true"/>
     <property name="workspace_count" type="int" value="2"/>
+
+    <!-- Shortcuts. Left out of the lock on purpose: the chrome is the OS, the
+         keys are the user's. Names are xfwm4's own shortcut ids, verified against
+         the binary's symbol table rather than guessed; the value is a GTK
+         accelerator, so '&lt;Super&gt;Left' is the Super key plus arrow. -->
+    <property name="keys" type="empty">
+      <property name="tile_left_key" type="string" value="&lt;Super&gt;Left"/>
+      <property name="tile_right_key" type="string" value="&lt;Super&gt;Right"/>
+      <property name="tile_up_key" type="string" value="&lt;Super&gt;Up"/>
+      <property name="tile_down_key" type="string" value="&lt;Super&gt;Down"/>
+      <property name="close_window_key" type="string" value="&lt;Super&gt;w"/>
+      <property name="fullscreen_key" type="string" value="&lt;Super&gt;f"/>
+      <property name="show_desktop_key" type="string" value="&lt;Super&gt;d"/>
+      <property name="next_workspace_key" type="string" value="&lt;Super&gt;Page_Down"/>
+      <property name="prev_workspace_key" type="string" value="&lt;Super&gt;Page_Up"/>
+    </property>
   </property>
 </channel>
