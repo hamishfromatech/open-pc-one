@@ -328,3 +328,21 @@ async def test_hello_reports_the_manifest_model_and_licence(make_server, config,
     assert hello["localModel"] == spec.as_public_dict()
     assert hello["localModel"]["licence"]["status"] == spec.licence.status
     await client.close()
+
+
+async def test_host_stats_answers_on_demand(make_server, config, registry, device_key):
+    """The companion app asks the box for its numbers; the box does not push them."""
+    srv, client = await _connected(make_server, config, registry, device_key)
+    await client.send({"type": "host_stats", "id": "stats-1"})
+    frame = await client.recv_until(lambda f: f.get("type") == "host_stats")
+    assert frame["id"] == "stats-1"
+    stats = frame["stats"]
+    for key in ("at", "cpu", "memory", "disk", "temperatureC", "network", "uptimeSeconds"):
+        assert key in stats, f"{key} missing from the stats frame"
+    # the first sample has no rate yet and says so, rather than reporting 0%
+    assert stats["cpu"]["percent"] is None
+    await client.send({"type": "host_stats", "id": "stats-2"})
+    second = await client.recv_until(lambda f: f.get("type") == "host_stats")
+    assert second["id"] == "stats-2"
+    assert second["stats"]["cpu"]["percent"] is not None
+    await client.close()

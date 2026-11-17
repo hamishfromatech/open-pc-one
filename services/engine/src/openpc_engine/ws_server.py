@@ -40,6 +40,7 @@ from typing import Any
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
+from . import hoststats
 from .auth import (
     AuthManager,
     DeviceRecord,
@@ -72,6 +73,7 @@ HOST_FRAME_TYPES = frozenset(
         "list_sessions",
         "new_session",
         "session_status",
+        "host_stats",
     }
 )
 
@@ -97,6 +99,8 @@ class EngineServer:
         self.registry = registry or DeviceRegistry(config.devices_file)
         self.pairing = pairing or PairingCodeStore(ttl=config.pairing_code_ttl, path=config.pairing_file)
         self.auth = AuthManager(self.registry, ttl=config.auth_challenge_ttl)
+        #: Two CPU samples make a rate; the meter holds the previous one.
+        self.cpu_meter = hoststats.CpuMeter()
         self.sessions = SessionManager(config)
         #: The active local model, from the manifest only. A broken manifest
         #: must not stop the edge from serving - ``doctor`` reports it loudly.
@@ -404,6 +408,17 @@ class _Connection:
                     "type": "host_sessions",
                     "id": request_id,
                     "sessions": self.server.list_sessions_payload(),
+                }
+            )
+        elif ftype == "host_stats":
+            # On demand rather than pushed: the client decides its own cadence, and
+            # a box watching itself for nobody is exactly the kind of idle work an
+            # always-on appliance should not do.
+            await self.send(
+                {
+                    "type": "host_stats",
+                    "id": request_id,
+                    "stats": hoststats.snapshot(self.server.cpu_meter),
                 }
             )
         elif ftype == "session_status":

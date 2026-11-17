@@ -1,0 +1,22 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "amaara-companion"
+version = "0.1.0"
+description = "AmaaraOS Companion: link to an Open-PC One, see its resources, talk to its agent"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "The A-Tech Corporation PTY LTD" }]
+dependencies = ["websockets==15.0.1", "cryptography==44.0.0"]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[project.scripts]
+amaara-companion = "amaara_companion.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/amaara_companion"]
