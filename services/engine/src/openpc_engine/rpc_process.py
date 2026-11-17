@@ -25,6 +25,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import providers
 from .config import EngineConfig
 from .flags import AttentionFlag
 from .jsonl import MAX_RECORD_BYTES, JsonlSplitter, encode_record
@@ -337,6 +338,14 @@ class EngineProcess:
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 30.0)
 
+    def _provider_env(self) -> dict[str, str]:
+        """Amaara Engine settings for the child, or nothing if unconfigured."""
+        try:
+            return providers.load(self.config.providers_file).env()
+        except providers.ProviderError as exc:
+            log.warning("provider config unusable", extra={"detail": str(exc)})
+            return {}
+
     async def _spawn_once(self) -> None:
         argv = self._argv()
         cwd = str(self.config.agent_cwd)
@@ -347,9 +356,13 @@ class EngineProcess:
             "spawning engine child",
             extra={"session_id": self.session_id, "detail": " ".join(argv)},
         )
+        # Provider config reaches the child as environment, never as argv: argv is
+        # visible in `ps` to every user on the box, and this carries an API key.
+        child_env = {**os.environ, **self._provider_env()}
         self._proc = await asyncio.create_subprocess_exec(
             *argv,
             cwd=cwd,
+            env=child_env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

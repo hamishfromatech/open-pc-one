@@ -40,7 +40,7 @@ from typing import Any
 from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
-from . import hoststats
+from . import hoststats, providers
 from .auth import (
     AuthManager,
     DeviceRecord,
@@ -101,6 +101,8 @@ class EngineServer:
         self.auth = AuthManager(self.registry, ttl=config.auth_challenge_ttl)
         #: Two CPU samples make a rate; the meter holds the previous one.
         self.cpu_meter = hoststats.CpuMeter()
+        #: Which engine the box routes big-model turns to, redacted for clients.
+        self.providers = self._load_providers()
         self.sessions = SessionManager(config)
         #: The active local model, from the manifest only. A broken manifest
         #: must not stop the edge from serving - ``doctor`` reports it loudly.
@@ -115,6 +117,14 @@ class EngineServer:
         #: be routed from the bridge alone.
         self._routes: dict[tuple[str, str], _Connection] = {}
         self._routers: dict[str, Any] = {}
+
+    def _load_providers(self):
+        """Provider state for clients: a URL and whether a key is present, never the key."""
+        try:
+            return providers.load(self.config.providers_file)
+        except providers.ProviderError:
+            log.warning("provider config unusable; the box will use its local model")
+            return providers.Providers()
 
     @staticmethod
     def _load_local_model(config: EngineConfig) -> ModelSpec | None:
@@ -418,7 +428,8 @@ class _Connection:
                 {
                     "type": "host_stats",
                     "id": request_id,
-                    "stats": hoststats.snapshot(self.server.cpu_meter),
+                    "stats": {**hoststats.snapshot(self.server.cpu_meter),
+                              "providers": self.server.providers.public()},
                 }
             )
         elif ftype == "session_status":
@@ -536,6 +547,7 @@ class _Connection:
         # What the box is *supposed* to be running. A client can show the model
         # and licence status before the first prompt; the engine's own model
         # list remains the runtime truth.
+        frame["providers"] = self.server.providers.public()
         if self.server.local_model is not None:
             frame["localModel"] = self.server.local_model.as_public_dict()
         return frame

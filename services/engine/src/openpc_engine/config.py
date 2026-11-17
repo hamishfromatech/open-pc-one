@@ -89,6 +89,12 @@ class EngineConfig:
     #: How long a bootstrap policy command may take before it is abandoned.
     policy_timeout: float = 15.0
 
+    #: Where the box is told to send big-model turns (Amaara Engine). Missing
+    #: file means "no engine configured", which is a valid appliance.
+    providers_file: Path = field(
+        default_factory=lambda: Path(os.environ.get("OPENPC_PROVIDERS_FILE", "/etc/openpc/providers.json"))
+    )
+
     # --- local model -------------------------------------------------------
     #: The model manifest is the only place a model is named. ``None`` means
     #: "look in the standard places" (env, /etc/openpc/models.json, the repo).

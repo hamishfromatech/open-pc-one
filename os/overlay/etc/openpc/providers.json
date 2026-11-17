@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Where this box sends big-model turns: Amaara Engine (OpenAI-compatible).",
+    "The key is NOT stored here: apiKeyEnv names an environment variable that the",
+    "engine service exports, and the child receives it at spawn. A leaked copy of",
+    "this file leaks a URL.",
+    "Leave active empty for an offline box: it then uses its own local model only."
+  ],
+  "active": "",
+  "providers": {
+    "amaara": {
+      "kind": "openai",
+      "baseUrl": "https://engine.example/v1",
+      "model": "amaara/auto",
+      "apiKeyEnv": "AMAARA_ENGINE_API_KEY"
+    }
+  }
+}

@@ -18,6 +18,10 @@ Environment=HOME=/home/openpc
 Environment=OPENPC_ENGINE_COMMAND=/opt/openpc/bin/a-coder-cli
 Environment=OPENPC_IDLE_TIMEOUT=1800
 Environment=OPENPC_STATE_DIR=/var/lib/openpc
+# Where big-model turns go, and the name of the variable holding the key. The
+# value comes from /etc/openpc/engine.env (0440, root:openpc) so it is not in a
+# unit file that anyone can read.
+EnvironmentFile=-/etc/openpc/engine.env
 # The model is configuration. The engine only reads it to report what the box
 # is supposed to be running (host_hello.localModel, doctor).
 Environment=OPENPC_MODEL_MANIFEST=/etc/openpc/models.json

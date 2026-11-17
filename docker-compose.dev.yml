@@ -7,6 +7,10 @@ services:
   engine:
     build: .
     image: open-pc-one-dev
+    # The appliance reads /etc/openpc/providers.json. In the dev container the
+    # state volume is the only writable place, so point it there.
+    environment:
+      OPENPC_PROVIDERS_FILE: /state/providers.json
     command:
       - python
       - -m

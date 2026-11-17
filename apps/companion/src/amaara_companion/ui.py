@@ -185,6 +185,9 @@ button:hover{background:var(--red2)}button.ghost{background:transparent;color:va
     <div class="card"><div class="k">Temperature</div><div class="v" id="temp">—</div></div>
     <div class="meta" id="units" style="margin-top:6px"></div>
 
+    <h2>Engine</h2>
+    <div class="meta" id="engine">—</div>
+
     <h2>Link</h2>
     <div class="meta" id="pin">pin —</div>
   </aside>
@@ -228,6 +231,16 @@ async function refresh(){
     const units = st.units || {};
     document.getElementById('units').textContent = Object.entries(units).map(([k,v]) => k+": "+v).join("\\n")
       + (st.uptimeSeconds ? "\\nup " + Math.round(st.uptimeSeconds/3600) + " h" : "");
+    // Which engine serves the big models, and whether it actually has a key.
+    // The join separator is built from a char code: a literal backslash-n here has
+    // been mangled twice by tooling on the way in, and a broken script leaves the
+    // page silently stuck on its initial values.
+    const nl = String.fromCharCode(10);
+    const prov = (st.providers || {}).provider;
+    document.getElementById('engine').textContent = prov
+      ? [prov.id + " engine", prov.model, prov.baseUrl,
+         prov.hasKey ? "key present" : "no key - local model only"].join(nl)
+      : ["no engine configured", "local model only"].join(nl);
     document.getElementById('pin').textContent = s.pin ? "pin " + s.pin : "pin —";
     const log = document.getElementById('log');
     log.innerHTML = (s.messages||[]).map(m =>
