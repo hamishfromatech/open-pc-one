@@ -30,8 +30,21 @@ BUTTON_STATES = ["active", "inactive", "prelight", "pressed"]
 
 @pytest.mark.parametrize("part", FRAME_PARTS)
 def test_every_frame_part_has_both_focus_states(part):
+    # The title strips are XPM on purpose: that is where xfwm4 collects the colour
+    # symbols its themerc refers to. Everything else is PNG.
+    suffixes = (".xpm", ".png") if part.startswith("title-") else (".png",)
     for state in ("active", "inactive"):
-        assert (THEME / f"{part}-{state}.png").is_file(), f"missing {part}-{state}.png"
+        found = [suffix for suffix in suffixes if (THEME / f"{part}-{state}{suffix}").is_file()]
+        assert found, f"missing {part}-{state} as {suffixes}"
+
+
+def test_the_title_strips_carry_the_colour_symbols():
+    # Without an XPM colour table xfwm4 has no text colour and draws no title.
+    strip = (THEME / "title-3-active.xpm").read_text()
+    assert " s active_text_color_2" in strip
+    assert " s active_mid_2" in strip
+    inactive = (THEME / "title-3-inactive.xpm").read_text()
+    assert " s inactive_text_color_2" in inactive
 
 
 @pytest.mark.parametrize("button", BUTTONS)
@@ -61,9 +74,13 @@ def test_the_generator_writes_every_part_these_tests_expect():
     # The PNGs are committed so the image needs no Pillow, but a regeneration must
     # not silently drop a part: the generator has to name each one.
     source = GENERATOR.read_text()
-    for part in ("title-1", "top-left", "top-right", "bottom-left", "bottom-right",
+    # The title strips are written in a loop now, so the test names the loop and
+    # the remaining parts individually.
+    for part in ("top-left", "top-right", "bottom-left", "bottom-right",
                  "top-", "left-", "right-", "bottom-", "close", "hide", "maximize"):
         assert part in source, f"generator never writes {part}"
+    assert 'f"title-{part}-{state}.xpm"' in source
+    assert "xpm_strip(" in source, "the title strips must be XPM (the symbols live there)"
 
 
 def test_defaults_live_where_xfconf_reads_them():
@@ -107,3 +124,33 @@ def test_the_default_session_does_not_list_a_panel_that_is_not_installed():
     assert "xfce4-panel" not in commands
     assert "xfwm4" in commands and "xfdesktop" in commands
     assert "amaara-shell" not in commands, "the session script starts the shell, not this file"
+
+
+def test_the_title_text_colours_are_symbol_assignments():
+    # xfwm4 themerc text colours are *symbol names* resolved against the theme's
+    # XPM colour table. A hex value there (or omitting the key) makes xfwm4 draw
+    # no title text at all — the window keeps its frame and its buttons and looks
+    # fine, which is why this went unnoticed.
+    fields = {}
+    for line in (THEME / "themerc").read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            fields[key.strip()] = value.strip()
+
+    for key in ("active_text_color", "inactive_text_color"):
+        assert key in fields, f"{key} is required or xfwm4 draws no title text"
+        assert not fields[key].startswith("#"), f"{key} must be a symbol name, not a colour"
+    assert fields["active_text_color"] == "active_text_color_2"
+
+
+def test_the_generator_and_the_committed_themerc_agree():
+    # The committed file is what the image ships; the generator is how it is made.
+    # If they drift, regenerating the theme silently changes the OS.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("xfwm_gen", GENERATOR)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    committed = (THEME / "themerc").read_text(encoding="utf-8").strip()
+    assert module.THEMERC.strip() == committed

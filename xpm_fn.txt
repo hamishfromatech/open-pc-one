@@ -1,0 +1,28 @@
+def xpm_strip(width: int, height: int, fill: str, hairline: str, symbols: dict[str, str]) -> str:
+    """A solid XPM strip whose colour table defines xfwm4's colour symbols.
+
+    XPM colour lines are one key character each; a symbol is an extra `s` field on
+    that line (`"c      c #0B0908 s active_text_color_2"`), which is how xfwm4
+    builds the map its themerc refers to. Writing the symbol name as the *key*
+    instead makes the whole XPM invalid, and xfwm4 then draws the title
+    transparently - a titlebar you can see the wallpaper through.
+    """
+    keys: list[tuple[str, str, str | None]] = [("a", fill, None), ("b", hairline, None)]
+    for index, (symbol, colour) in enumerate(symbols.items()):
+        keys.append((chr(ord("c") + index), colour, symbol))
+
+    lines = [f'"{width} {height} {len(keys)} 1"']
+    for key, colour, symbol in keys:
+        suffix = f" s {symbol}" if symbol else ""
+        lines.append(f'"{key}      c {colour}{suffix}"')
+    body = ["a" * width] * (height - 1) + ["b" * width]
+    lines.extend(f'"{row}"' for row in body)
+    joined = ",\n".join(lines)
+    return (
+        "/* XPM */\n"
+        "static char * amaara_title[] = {\n"
+        f"{joined}\n"
+        "};\n"
+    )
+
+

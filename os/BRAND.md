@@ -146,3 +146,26 @@ own failsafe path starts a panel whenever it has to start a window manager itsel
 failsafe path is not configurable. Removing the line means starting xfwm4 before
 xfce4-session, which is a session-ordering change to verify on hardware rather
 than assert in a test.
+
+### Open: the window title does not render
+
+The frame, the traffic-light controls and the hairline all draw correctly; the
+**title text does not**. Four hypotheses have been eliminated, each by experiment
+on a live session rather than by reading code:
+
+| Hypothesis | Test | Result |
+|---|---|---|
+| Fractional font size (`Inter 10.5`) breaks Pango | `title_font=Inter 10`, then `Sans 10` | still nothing — not the font |
+| Text colour must be a hex value | `active_text_color=#0B0908` | still nothing |
+| The stock title images are required | copied `Default`'s `title-*.png` in | still nothing |
+| A PNG-only theme has no symbol table | title strips now emitted as **XPM** with `s <symbol>` colour fields, `themerc` refers to `active_text_color_2` | symbols exist, text still absent |
+
+What IS proven: the theme's symbols are loadable (the `themerc` text-colour keys
+are symbol assignments, and a PNG-only theme with no assignment at all is
+identical in behaviour), the frame parts are all present and correctly named, and
+the `Default` theme in the same session *does* draw text — so the session, the
+font stack and the WM are fine, and the difference is inside the theme.
+
+Next attempt should not start from a generator: copy `Default`'s XPM set, replace
+its colours with ours, and confirm text renders before re-deriving the design. If
+that works, the missing piece is visible by diffing the two colour tables.
