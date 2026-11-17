@@ -166,9 +166,20 @@ identical in behaviour), the frame parts are all present and correctly named, an
 the `Default` theme in the same session *does* draw text — so the session, the
 font stack and the WM are fine, and the difference is inside the theme.
 
-Next attempt should not start from a generator: copy `Default`'s XPM set, replace
-its colours with ours, and confirm text renders before re-deriving the design. If
-that works, the missing piece is visible by diffing the two colour tables.
+**Two automated harnesses were tried and both were invalid** — record this so the
+next attempt does not repeat them:
+
+* screenshotting a **screen region** measures the fullscreen kiosk browser, because
+  the window under test opens behind it — every variant reported zero ink;
+* capturing the **client window** (`Gdk.pixbuf_get_from_window` on the id from
+  `xdotool search --name`) measures the app's own content, not the frame — the
+  sidebar wordmark counted as "title ink".
+
+A trustworthy measurement needs the **frame** window (the parent of the client, from
+`xwininfo -id <client> -tree`) captured with `Gdk.pixbuf_get_from_window`, and a
+window that is raised above the kiosk browser first. With that harness, bisect the
+themerc: `Default`'s keys plus our colour lines is the known-good baseline, since
+`Default` renders text on this box and `Amaara` does not.
 
 ### Motion
 
