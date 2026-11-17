@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         xfce4-terminal \
         xfce4-settings \
         python3-gi \
+        python3-dbus \
         gir1.2-gtk-3.0 \
         fonts-inter \
         papirus-icon-theme \

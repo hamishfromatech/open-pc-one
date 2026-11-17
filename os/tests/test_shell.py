@@ -138,3 +138,25 @@ def test_settings_never_renders_an_empty_separator():
     source = (SHELL.parent / "amaara-settings").read_text()
     assert "not activated" in source, "an empty licence must say so, not print a bare separator"
     assert "if tier or batch" in source, "the empty case must be handled, not concatenated"
+
+
+def test_the_shell_serves_real_notifications_and_has_an_osd():
+    source = SHELL.read_text()
+    # A notification centre that only shows what we choose to put in it is a mock:
+    # the shell serves org.freedesktop.Notifications so apps land in it.
+    assert "org.freedesktop.Notifications" in source
+    assert "def Notify(" in source and "GetServerInformation" in source
+    assert "class Centre" in source and "class Osd" in source
+    # and it degrades instead of dying when the bus module is absent
+    assert "python3-dbus not installed" in source
+    # OSD is feedback, not a dialog: it must close itself
+    assert "GLib.timeout_add(int(seconds * 1000), self._hide)" in source
+
+
+def test_panels_ask_for_a_size_instead_of_resizing():
+    # resize() is a no-op on a non-resizable window: the notification centre kept
+    # its natural width and clipped its own last card until this was noticed.
+    source = SHELL.read_text()
+    centre = source.split("class Centre")[1].split("class Osd")[0]
+    assert "set_size_request(" in centre, "the centre must request its size"
+    assert "self.set_resizable(False)" in centre

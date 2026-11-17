@@ -32,6 +32,7 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk  # noqa: E402
 
 CREAM = "rgba(249,244,238,0.94)"
+WHITE_SOLID = "#FFFDF9"
 RED_DEEP = "#A8202A"
 CREAM_SOLID = "#F9F4EE"
 INK = "#0B0908"
@@ -167,6 +168,29 @@ window {{ background: {CREAM_SOLID}; }}
 .lock .date {{ color: {MUTED}; font-size: 15px; }}
 .lock .hint {{ color: {MUTED}; font-size: 12.5px; letter-spacing: 0.12em; }}
 .lock .device {{ color: {MUTED}; font-size: 11.5px; }}
+
+/* Notification centre: the panel behind the clock. */
+.centre {{ background: transparent; }}
+.centre-body {{ background: {CREAM}; border: 1px solid {HAIR}; border-radius: 16px; padding: 16px; }}
+.centre-title {{ font-family: "DejaVu Serif", serif; font-size: 17px; color: {INK}; }}
+.notif {{ background: {WHITE_SOLID}; border: 1px solid {HAIR}; border-radius: 12px; padding: 11px 13px; }}
+.notif.urgent {{ border-color: #f0c3c1; }}
+.notif-app {{ color: {MUTED}; font-size: 9.5px; letter-spacing: 0.14em; }}
+.notif-when {{ color: {MUTED}; font-size: 10.5px; }}
+.notif-title {{ color: {INK}; font-size: 13px; font-weight: 600; }}
+.notif-body {{ color: {MUTED}; font-size: 12.5px; }}
+.empty {{ color: {MUTED}; font-size: 13px; padding: 18px 4px; }}
+button.action {{ background: transparent; border: 0; color: {RED_DEEP}; font-size: 11.5px;
+  padding: 4px 6px; border-radius: 7px; }}
+button.action:hover {{ background: rgba(215,46,53,0.08); }}
+.unread {{ background: {RED}; color: #fff; border-radius: 999px; padding: 1px 6px;
+  font-size: 9.5px; }}
+
+/* OSD: one line of feedback, gone in a second. */
+.osd {{ background: transparent; }}
+.osd-body {{ background: rgba(11,9,8,0.88); border-radius: 14px; padding: 12px 18px; }}
+.osd-icon {{ color: {CREAM_SOLID}; font-size: 13px; }}
+.osd-label {{ color: {CREAM_SOLID}; font-size: 13.5px; }}
 """
 
 
@@ -193,11 +217,16 @@ class Shell:
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+        self.store = NotificationStore()
+        self.centre = Centre(self.store)
+        self.osd = Osd()
         self.lock_screen = LockScreen(on_lock=self._cover_surfaces,
                                       on_unlock=self._reveal_surfaces)
         self.launcher = Launcher(self.lock_screen)
         self.bar = self._bar()
         self.dock = self._dock()
+        self._last_volume = _volume()
+        self.notify_service = start_notification_service(self.store, self._on_notification)
 
     # -- windows -----------------------------------------------------------
 
@@ -261,7 +290,17 @@ class Shell:
         right.pack_start(dot, False, False, 4)
         self.clock = Gtk.Label(label="")
         self.clock.get_style_context().add_class("clock")
-        right.pack_end(self.clock, False, False, 0)
+        self.clock_button = Gtk.Button()
+        self.clock_button.set_relief(Gtk.ReliefStyle.NONE)
+        self.clock_button.set_focus_on_click(False)
+        self.clock_button.add(self.clock)
+        self.clock_button.set_tooltip_text("Notifications")
+        self.clock_button.connect("clicked", lambda _b: self.centre.toggle())
+        right.pack_end(self.clock_button, False, False, 0)
+        self.unread = Gtk.Label(label="")
+        self.unread.get_style_context().add_class("unread")
+        self.unread.set_no_show_all(True)
+        right.pack_end(self.unread, False, False, 6)
 
         box.pack_start(left, False, False, 0)
         box.pack_end(right, False, False, 0)
@@ -309,7 +348,20 @@ class Shell:
 
     # -- lock cover --------------------------------------------------------
 
+    def _on_notification(self, note: Notification) -> None:
+        self.osd.flash("", note.title or note.body or "Notification")
+        self._paint_unread()
+
+    def _paint_unread(self) -> None:
+        count = self.store.unread
+        if count:
+            self.unread.set_text(str(min(count, 99)))
+            self.unread.show()
+        else:
+            self.unread.hide()
+
     def _cover_surfaces(self) -> None:
+        self.centre.hide()
         for surface in (self.bar, self.dock):
             surface.hide()
 
@@ -329,6 +381,13 @@ class Shell:
         self.batt.set_text(f"{level}%" if level is not None else "")
         self.vol.set_text(_volume())
         self.app_label.set_text(_focused_window())
+        # Volume has no hotkey daemon on this box, so the level is watched instead
+        # of being triggered: any change, from any app, raises the OSD.
+        level = _volume()
+        if level != self._last_volume:
+            self._last_volume = level
+            if level:
+                self.osd.flash("", f"Volume {level}")
         self._place_dock()
         return True
 
@@ -460,6 +519,9 @@ class LockScreen(Gtk.Window):
 
         self.add(box)
         self.connect("key-press-event", self._on_key)
+        # No focus-out close: the panel is presented over a kiosk browser that
+        # takes focus back immediately, so it closed the instant it opened. The
+        # clock toggles it, Esc closes it, and that is enough.
         self.connect("button-press-event", self._on_key)
         self.tick()
 
@@ -603,6 +665,9 @@ class Launcher(Gtk.Window):
         # app you just launched is the classic launcher bug.
         self.connect("focus-out-event", self._on_focus_out)
         self.connect("key-press-event", self._on_key)
+        # No focus-out close: the panel is presented over a kiosk browser that
+        # takes focus back immediately, so it closed the instant it opened. The
+        # clock toggles it, Esc closes it, and that is enough.
         # Clicking anywhere else closes it: an overlay that stays open behind the
         # app you just launched is the classic launcher bug.
         self.connect("focus-out-event", self._on_focus_out)
@@ -720,6 +785,277 @@ class Launcher(Gtk.Window):
         self.move((screen_width() - width) // 2, max(60, screen_height() // 6))
         self.present()
         self.entry.grab_focus()
+
+
+class Notification:
+    """One thing the machine wants to tell the person in front of it."""
+
+    __slots__ = ("app", "title", "body", "urgency", "notified_at")
+
+    def __init__(self, app: str, title: str, body: str, urgency: int = 1) -> None:
+        self.app = app
+        self.title = title
+        self.body = body
+        self.urgency = urgency
+        self.notified_at = time.time()
+
+    def ago(self) -> str:
+        delta = int(time.time() - self.notified_at)
+        if delta < 60:
+            return "now"
+        if delta < 3600:
+            return f"{delta // 60} min"
+        if delta < 86400:
+            return f"{delta // 3600} h"
+        return f"{delta // 86400} d"
+
+
+class NotificationStore:
+    """Newest first, bounded, and never the source of truth for anything.
+
+    A notification is a nudge, not a record: when the buffer is full the oldest
+    one goes, because a centre you have to clear to stay usable is a bug.
+    """
+
+    def __init__(self, limit: int = 50) -> None:
+        self.items: list[Notification] = []
+        self.limit = limit
+        self.unread = 0
+
+    def add(self, app: str, title: str, body: str, urgency: int = 1) -> Notification:
+        note = Notification(app, title, body, urgency)
+        self.items.insert(0, note)
+        del self.items[self.limit:]
+        self.unread += 1
+        return note
+
+    def clear(self) -> None:
+        self.items.clear()
+        self.unread = 0
+
+    def mark_read(self) -> None:
+        self.unread = 0
+
+
+class Centre(Gtk.Window):
+    """The panel behind the clock: what happened, newest first."""
+
+    def __init__(self, store: NotificationStore) -> None:
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.store = store
+        self.set_decorated(False)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_keep_above(True)
+        self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+        self.set_resizable(False)
+        self.get_style_context().add_class("centre")
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        outer.get_style_context().add_class("centre-body")
+
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        title = Gtk.Label(label="Notifications")
+        title.set_xalign(0)
+        title.get_style_context().add_class("centre-title")
+        head.pack_start(title, True, True, 0)
+        clear = Gtk.Button(label="Clear all")
+        clear.set_relief(Gtk.ReliefStyle.NONE)
+        clear.get_style_context().add_class("action")
+        clear.connect("clicked", self._clear)
+        head.pack_end(clear, False, False, 0)
+        outer.pack_start(head, False, False, 0)
+
+        self.list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_max_content_height(520)
+        scroller.set_propagate_natural_height(True)
+        scroller.add(self.list)
+        outer.pack_start(scroller, True, True, 0)
+
+        self.add(outer)
+        self.connect("key-press-event", self._on_key)
+        # No focus-out close: the panel is presented over a kiosk browser that
+        # takes focus back immediately, so it closed the instant it opened. The
+        # clock toggles it, Esc closes it, and that is enough.
+        self.refresh()
+
+    def _on_key(self, _widget, event):
+        if event.keyval == Gdk.KEY_Escape:
+            self.hide()
+            return True
+        return False
+
+    def _clear(self, *_args) -> None:
+        self.store.clear()
+        self.refresh()
+
+    def refresh(self) -> None:
+        for child in self.list.get_children():
+            self.list.remove(child)
+        if not self.store.items:
+            empty = Gtk.Label(label="Nothing yet.")
+            empty.set_xalign(0)
+            empty.get_style_context().add_class("empty")
+            self.list.pack_start(empty, False, False, 0)
+        for note in self.store.items[:20]:
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+            card.get_style_context().add_class("notif")
+            if note.urgency >= 2:
+                card.get_style_context().add_class("urgent")
+            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            app = Gtk.Label(label=note.app.upper())
+            app.set_xalign(0)
+            app.get_style_context().add_class("notif-app")
+            when = Gtk.Label(label=note.ago())
+            when.set_xalign(1)
+            when.get_style_context().add_class("notif-when")
+            line.pack_start(app, False, False, 0)
+            line.pack_end(when, False, False, 0)
+            card.pack_start(line, False, False, 0)
+            if note.title:
+                title = Gtk.Label(label=note.title)
+                title.set_xalign(0)
+                title.set_line_wrap(True)
+                title.get_style_context().add_class("notif-title")
+                card.pack_start(title, False, False, 0)
+            if note.body:
+                body = Gtk.Label(label=note.body)
+                body.set_xalign(0)
+                body.set_line_wrap(True)
+                body.set_max_width_chars(38)
+                body.get_style_context().add_class("notif-body")
+                card.pack_start(body, False, False, 0)
+            self.list.pack_start(card, False, False, 0)
+        self.list.show_all()
+
+    def toggle(self) -> None:
+        if self.get_visible():
+            self.hide()
+            return
+        self.refresh()
+        self.show_all()
+        width = 380
+        # set_size_request, not resize(): this window is deliberately not
+        # resizable, and GTK ignores resize() on those, which is why the panel kept
+        # its natural width and clipped its own last card.
+        cards = max(1, min(len(self.store.items), 4))
+        height = min(screen_height() - 110, 120 + cards * 92)
+        self.set_size_request(width, height)
+        self.resize(width, height)
+        self.move(screen_width() - width - 14, 40)
+        self.present()
+        self.store.mark_read()
+
+
+class Osd(Gtk.Window):
+    """The little pill that appears when a level changes.
+
+    One line, one bar, gone in a second and a half. It is feedback, not a dialog:
+    anything that waits for you to dismiss it is in the wrong layer.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.set_decorated(False)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_keep_above(True)
+        self.set_accept_focus(False)
+        self.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
+        self.get_style_context().add_class("osd")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        box.get_style_context().add_class("osd-body")
+        self.icon = Gtk.Label(label="")
+        self.icon.get_style_context().add_class("osd-icon")
+        self.label = Gtk.Label(label="")
+        self.label.get_style_context().add_class("osd-label")
+        box.pack_start(self.icon, False, False, 0)
+        box.pack_start(self.label, False, False, 0)
+        self.add(box)
+        self._timer: int | None = None
+
+    def flash(self, icon: str, text: str, seconds: float = 1.6) -> None:
+        self.icon.set_text(icon)
+        self.label.set_text(text)
+        self.show_all()
+        width, height = max(240, self.get_size()[0]), 64
+        self.set_size_request(width, height)
+        self.resize(width, height)
+        self.move((screen_width() - width) // 2, screen_height() - 150)
+        if self._timer is not None:
+            GLib.source_remove(self._timer)
+        self._timer = GLib.timeout_add(int(seconds * 1000), self._hide)
+
+    def _hide(self) -> bool:
+        self._timer = None
+        self.hide()
+        return False
+
+
+def start_notification_service(store: NotificationStore, on_add) -> object | None:
+    """Serve org.freedesktop.Notifications, so app notifications reach the centre.
+
+    Returns the service object (keep a reference: dbus drops the name when the
+    object is collected) or None when python3-dbus is absent, in which case the
+    centre still works for anything we raise ourselves. Silence is correct here -
+    a missing optional bus module must not take the desktop with it.
+    """
+    try:
+        import dbus
+        import dbus.service
+        from dbus.mainloop.glib import DBusGMainLoop
+    except ImportError:
+        print("amaara-shell: python3-dbus not installed; notifications are internal only",
+              file=sys.stderr)
+        return None
+
+    try:
+        DBusGMainLoop(set_as_default=True)
+        bus = dbus.SessionBus()
+    except Exception as exc:  # pragma: no cover - no session bus in this session
+        print(f"amaara-shell: no session bus for notifications: {exc}", file=sys.stderr)
+        return None
+
+    class Notifications(dbus.service.Object):
+        @dbus.service.method("org.freedesktop.Notifications", in_signature="susssasa{sv}i",
+                             out_signature="u")
+        def Notify(self, app_name, replaces_id, app_icon, summary, body, actions, hints, expire):
+            note = store.add(str(app_name or "app"), str(summary or ""), str(body or ""),
+                             int(hints.get("urgency", 1)) if hints else 1)
+            on_add(note)
+            return dbus.UInt32(1)
+
+        @dbus.service.method("org.freedesktop.Notifications", in_signature="u",
+                             out_signature="")
+        def CloseNotification(self, notification_id):
+            return None
+
+        @dbus.service.method("org.freedesktop.Notifications", in_signature="",
+                             out_signature="as")
+        def GetCapabilities(self):
+            return dbus.Array(["body", "urgency"], signature="s")
+
+        @dbus.service.method("org.freedesktop.Notifications", in_signature="",
+                             out_signature="ssss")
+        def GetServerInformation(self):
+            return ("AmaaraOS", "The A-Tech Corporation", "1.0.0", "1.2")
+
+        @dbus.service.signal("org.freedesktop.Notifications", signature="uu")
+        def NotificationClosed(self, notification_id, reason):
+            return None
+
+    try:
+        service = Notifications(bus, "/org/freedesktop/Notifications")
+        bus_name = dbus.service.BusName("org.freedesktop.Notifications", bus)
+        service.bus_name = bus_name
+    except Exception as exc:  # pragma: no cover - another server owns the name
+        print(f"amaara-shell: notifications already served elsewhere: {exc}", file=sys.stderr)
+        return None
+    print("amaara-shell: serving org.freedesktop.Notifications", file=sys.stderr)
+    return service
 
 
 def screen_width() -> int:

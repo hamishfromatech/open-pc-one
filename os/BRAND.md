@@ -104,7 +104,7 @@ desktop that moves when you did not move it is a toy.
 | Window chrome (xfwm4 titlebars) | Adwaita default — **needs a branded xfwm4 theme** |
 | Lock screen (`amaara-shell`) | built — full-screen cover; no password by design, and it says so |
 | Settings app (`amaara-settings`) | built — 7 panes reading the running system |
-| Notification centre, OSD for volume/brightness | **missing** |
+| Notification centre (`org.freedesktop.Notifications` server) + OSD | built — clock opens it; apps notify it |
 | App launcher / search (`amaara-shell`) | built — click the wordmark; reads real `.desktop` entries |
 | Window snapping + workspace gesture | xfwm4 defaults only |
 
