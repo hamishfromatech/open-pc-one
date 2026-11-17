@@ -51,8 +51,10 @@ APPS = [
      "Files", ["thunar"]),
     ("terminal", "terminal.svg", ("xfce4-terminal", "utilities-terminal"),
      "Terminal", ["xfce4-terminal"]),
+    # Our own settings window, not xfce4-settings-manager: the panes in there
+    # describe XFCE, and this machine is not XFCE.
     ("settings", "settings.svg", ("preferences-system", "xfce-settings"),
-     "Settings", ["xfce4-settings-manager"]),
+     "Settings", ["amaara-settings"]),
 ]
 
 
@@ -597,7 +599,13 @@ class Launcher(Gtk.Window):
 
         self.entry.connect("changed", self._filter)
         self.entry.connect("activate", self._open_selected)
+        # Clicking anywhere else closes it: an overlay that stays open behind the
+        # app you just launched is the classic launcher bug.
+        self.connect("focus-out-event", self._on_focus_out)
         self.connect("key-press-event", self._on_key)
+        # Clicking anywhere else closes it: an overlay that stays open behind the
+        # app you just launched is the classic launcher bug.
+        self.connect("focus-out-event", self._on_focus_out)
         self.list.connect("row-activated", self._on_row)
         self.entry.connect("key-press-event", self._on_entry_key)
         self.current = 0
@@ -673,6 +681,10 @@ class Launcher(Gtk.Window):
                 self._system(argv[0].split(":", 1)[1])
             else:
                 launch(argv)
+
+    def _on_focus_out(self, *_args) -> bool:
+        self.hide()
+        return False
 
     def _on_key(self, _widget, event) -> bool:
         if event.keyval == Gdk.KEY_Escape:

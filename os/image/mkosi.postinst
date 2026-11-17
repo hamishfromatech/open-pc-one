@@ -33,6 +33,7 @@ install -m 0755 "$REPO/os/overlay/usr/local/bin/amaara-version" "$BUILDROOT/usr/
 install -d "$BUILDROOT/usr/share/amaara/icons"
 install -m 0644 "$REPO"/os/overlay/usr/share/amaara/icons/*.svg "$BUILDROOT/usr/share/amaara/icons/"
 install -m 0755 "$REPO/os/overlay/usr/local/bin/amaara-shell" "$BUILDROOT/usr/local/bin/amaara-shell"
+install -m 0755 "$REPO/os/overlay/usr/local/bin/amaara-settings" "$BUILDROOT/usr/local/bin/amaara-settings"
 install -d "$BUILDROOT/usr/share/themes/Amaara/xfwm4"
 install -m 0644 "$REPO"/os/overlay/usr/share/themes/Amaara/xfwm4/* "$BUILDROOT/usr/share/themes/Amaara/xfwm4/"
 # The license public key and the per-batch manifest are build inputs, not

@@ -91,3 +91,50 @@ def test_the_lock_cover_owns_the_whole_screen():
     assert "PRESS ENTER" in source.upper()
     # and it must never be able to swallow the session: no grab, no modal loop
     assert "Gtk.main()" in source  # one loop only, shared with the shell
+
+
+def test_the_settings_app_is_ours_and_reads_the_running_system():
+    settings = SHELL.parent / "amaara-settings"
+    assert settings.is_file(), "amaara-settings must ship next to the shell"
+    assert settings.stat().st_mode & 0o111
+    source = settings.read_text()
+    # It has to describe this machine, not XFCE: OS identity, setup state, the
+    # A/B slot and the model manifest are all read, not invented.
+    for probe in ("/etc/os-release", "/proc/cmdline", "setup/state.json", "models.json"):
+        assert probe in source, f"settings never reads {probe}"
+    # The panes are ours, about this machine, not XFCE's vocabulary.
+    for pane in ("About this computer", "Display", "Network", "Audio", "Software",
+                 "Agent", "Updates", "A/B root slots"):
+        assert pane in source, f"settings has no {pane!r} surface"
+    # The dock must open ours (the string may still appear in a comment explaining
+    # why it is not xfce4-settings-manager).
+    shell = SHELL.read_text()
+    assert '"amaara-settings"' in shell
+    assert "xfce4-settings-manager" not in shell.split("APPS = [")[1].split("]")[0]
+
+
+def test_the_settings_app_reads_the_state_file_s_own_field_names():
+    # The setup state is written from a dataclass, so the keys are snake_case.
+    # Reading camelCase showed an em dash where a real device id existed.
+    source = (SHELL.parent / "amaara-settings").read_text()
+    for key in ("device_id", "license_tier", "license_batch", "phase"):
+        assert key in source, f"settings never reads {key}"
+    for wrong in ("deviceId", "licenseTier", "licenseBatch"):
+        assert wrong not in source, f"settings reads a key the state file never writes: {wrong}"
+
+
+def test_the_launcher_dismisses_when_focus_leaves_but_the_lock_does_not():
+    source = SHELL.read_text()
+    lock = source.split("class LockScreen")[1].split("class Launcher")[0]
+    launcher = source.split("class Launcher")[1]
+    # An overlay left open behind the app you just launched is the classic
+    # launcher bug; a lock screen that dismisses when it loses focus is worse.
+    assert "_on_focus_out" in launcher
+    assert "_on_focus_out" not in lock
+    assert "self.hide()" in launcher.split("def _on_focus_out")[1].split("def ")[0]
+
+
+def test_settings_never_renders_an_empty_separator():
+    source = (SHELL.parent / "amaara-settings").read_text()
+    assert "not activated" in source, "an empty licence must say so, not print a bare separator"
+    assert "if tier or batch" in source, "the empty case must be handled, not concatenated"

@@ -1,0 +1,403 @@
+#!/usr/bin/env python3
+"""amaara-settings — the OS's own settings window.
+
+Not a skin over xfce4-settings-manager: that app's panes are XFCE's vocabulary
+(session cache, window tweaks, appearance themes) and none of it is what this
+machine is. The panes here answer the questions this device actually raises:
+
+    About      which OS, which build, which slot, which device
+    Display    the screen the agent drives
+    Network    the link, and whether provisioning found one
+    Audio      levels, if there is any audio at all
+    Software   the profiles setup installed, and what is running
+    Agent      the engine, the pairing state, the local model
+    Updates    the A/B slot and how an update lands
+
+Everything is read from the running system. Where a value is absent the pane
+says why instead of showing a zero — an OS that invents numbers is worse than
+one that admits a missing sensor.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, Gtk  # noqa: E402
+
+CREAM = "#F9F4EE"
+CREAM_2 = "#F2E9E0"
+INK = "#0B0908"
+MUTED = "#6E6058"
+HAIR = "#E4D6CA"
+RED = "#D72E35"
+RED_DEEP = "#A8202A"
+
+STATE_FILE = Path(os.environ.get("AMAARA_SETUP_STATE", "/var/lib/amaara/setup/state.json"))
+OS_RELEASE = Path("/etc/os-release")
+MODEL_MANIFEST = Path(os.environ.get("OPENPC_MODEL_MANIFEST", "/etc/openpc/models.json"))
+
+CSS = f"""
+* {{ font-family: "Inter", "DejaVu Sans", sans-serif; }}
+window {{ background: {CREAM}; color: {INK}; }}
+.side {{ background: {CREAM}; border-right: 1px solid {HAIR}; padding: 18px 12px; }}
+.side .brand {{ font-family: "DejaVu Serif", serif; font-weight: 700; font-size: 15px;
+  padding: 6px 10px 18px 10px; }}
+.side button {{ background: transparent; border: 0; border-radius: 9px; padding: 9px 12px;
+  color: {INK}; font-size: 13.5px; }}
+.side button:hover {{ background: rgba(228,214,202,0.65); }}
+.side button.on {{ background: {RED}; color: #fff; }}
+.pane {{ padding: 28px 34px; }}
+h1 {{ font-family: "DejaVu Serif", serif; font-size: 26px; margin: 0 0 4px 0; }}
+.sub {{ color: {MUTED}; font-size: 13px; margin-bottom: 22px; }}
+.section {{ color: {MUTED}; font-size: 10.5px; letter-spacing: 0.16em; margin: 22px 0 6px 0; }}
+.row {{ border-bottom: 1px solid #f0e7de; padding: 11px 2px; }}
+.row .k {{ color: {MUTED}; font-size: 13px; }}
+.row .v {{ color: {INK}; font-size: 13px; font-family: "DejaVu Sans Mono", monospace; }}
+.badge {{ border-radius: 999px; padding: 3px 9px; font-size: 11px; }}
+.ok {{ background: #E7F4EC; color: #2F7D4F; }}
+.warn {{ background: #FDF1F0; color: {RED_DEEP}; }}
+.idle {{ background: {CREAM_2}; color: {MUTED}; }}
+.note {{ background: {CREAM_2}; border-radius: 10px; padding: 12px 14px; color: {MUTED};
+  font-size: 12.5px; }}
+button.action {{ background: {RED}; color: #fff; border: 0; border-radius: 9px;
+  padding: 9px 16px; font-size: 13px; }}
+button.action:hover {{ background: {RED_DEEP}; }}
+"""
+
+SECTIONS = ("About", "Display", "Network", "Audio", "Software", "Agent", "Updates")
+
+
+# --- data ------------------------------------------------------------------ #
+def _run(argv: list[str], timeout: int = 3) -> str:
+    if shutil.which(argv[0]) is None:
+        return ""
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return (done.stdout or "").strip()
+
+
+def read_os_release() -> dict[str, str]:
+    fields: dict[str, str] = {}
+    try:
+        for line in OS_RELEASE.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.startswith("#"):
+                key, _, value = line.partition("=")
+                fields[key.strip()] = value.strip().strip('"')
+    except OSError:
+        pass
+    return fields
+
+
+def read_state() -> dict:
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def active_slot() -> str:
+    try:
+        cmdline = Path("/proc/cmdline").read_text()
+    except OSError:
+        return "unknown"
+    for slot in ("a", "b"):
+        if f"openpc.slot={slot}" in cmdline:
+            return slot
+    return "not boot-counted"
+
+
+def engine_state() -> str:
+    out = _run(["systemctl", "is-active", "openpc-engine"])
+    return out or ("no systemd here" if shutil.which("systemctl") is None else "unknown")
+
+
+def link_state() -> list[tuple[str, str]]:
+    interfaces: list[tuple[str, str]] = []
+    base = Path("/sys/class/net")
+    if not base.is_dir():
+        return interfaces
+    for entry in sorted(base.iterdir()):
+        if entry.name == "lo":
+            continue
+        try:
+            state = (entry / "operstate").read_text().strip()
+        except OSError:
+            state = "unknown"
+        interfaces.append((entry.name, state))
+    return interfaces
+
+
+def wifi_name() -> str:
+    return _run(["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"]) or ""
+
+
+def volume() -> str:
+    out = _run(["pactl", "get-sink-volume", "@DEFAULT_SINK@"])
+    for token in out.replace("%", " ").split():
+        if token.isdigit():
+            return f"{token}%"
+    return ""
+
+
+def sink_state() -> str:
+    out = _run(["pactl", "get-sink-mute", "@DEFAULT_SINK@"])
+    return out or ("no audio server" if shutil.which("pactl") is None else "")
+
+
+def local_model() -> str:
+    try:
+        manifest = json.loads(MODEL_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return "no manifest"
+    active = manifest.get("active")
+    spec = (manifest.get("models") or {}).get(active, {})
+    if not spec:
+        return "no active model"
+    licence = (spec.get("licence") or {}).get("status", "unknown")
+    return f"{spec.get('displayName', active)} · ctx {spec.get('contextLength', '?')} · licence {licence}"
+
+
+def display_state() -> str:
+    display = Gdk.Display.get_default()
+    if display is None:
+        return "no display"
+    monitor = display.get_primary_monitor() or display.get_monitor(0)
+    if monitor is None:
+        return "no monitor"
+    geometry = monitor.get_geometry()
+    scale = monitor.get_scale_factor()
+    return f"{geometry.width}×{geometry.height} @{scale}x · {monitor.get_model() or 'virtual'}"
+
+
+# --- widgets ---------------------------------------------------------------- #
+def row(label: str, value: str) -> Gtk.Widget:
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+    box.get_style_context().add_class("row")
+    key = Gtk.Label(label=label)
+    key.set_xalign(0)
+    key.get_style_context().add_class("k")
+    val = Gtk.Label(label=value)
+    val.set_xalign(1)
+    val.set_selectable(True)
+    val.get_style_context().add_class("v")
+    box.pack_start(key, False, False, 0)
+    box.pack_end(val, True, True, 0)
+    return box
+
+
+def section(title: str) -> Gtk.Widget:
+    label = Gtk.Label(label="  ".join(title.upper()))
+    label.set_xalign(0)
+    label.get_style_context().add_class("section")
+    return label
+
+
+def badge(text: str, kind: str = "idle") -> Gtk.Widget:
+    label = Gtk.Label(label=text)
+    label.get_style_context().add_class("badge")
+    label.get_style_context().add_class(kind)
+    return label
+
+
+def note(text: str) -> Gtk.Widget:
+    box = Gtk.Box()
+    label = Gtk.Label(label=text)
+    label.set_xalign(0)
+    label.set_line_wrap(True)
+    label.set_max_width_chars(64)
+    box.get_style_context().add_class("note")
+    box.pack_start(label, True, True, 0)
+    return box
+
+
+class Settings(Gtk.Window):
+    def __init__(self) -> None:
+        super().__init__(title="Settings")
+        self.set_default_size(880, 600)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_icon_name("preferences-system")
+
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS.encode())
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        root = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.add(root)
+
+        side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        side.get_style_context().add_class("side")
+        brand = Gtk.Label(label="AmaaraOS")
+        brand.set_xalign(0)
+        brand.get_style_context().add_class("brand")
+        side.pack_start(brand, False, False, 0)
+
+        self.stack = Gtk.Stack()
+        self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.buttons: dict[str, Gtk.Button] = {}
+        for name in SECTIONS:
+            button = Gtk.Button(label=name)
+            button.set_relief(Gtk.ReliefStyle.NONE)
+            button.get_style_context().add_class("side-button")
+            button.connect("clicked", lambda _b, n=name: self.show(n))
+            side.pack_start(button, False, False, 0)
+            self.buttons[name] = button
+            self.stack.add_named(self._pane(name), name)
+
+        root.pack_start(side, False, False, 0)
+        root.pack_start(self.stack, True, True, 0)
+        self.show_all()
+        self.show("About")
+
+    # -- panes -------------------------------------------------------------
+
+    def show(self, name: str) -> None:
+        self.stack.set_visible_child_name(name)
+        for label, button in self.buttons.items():
+            context = button.get_style_context()
+            if label == name:
+                context.add_class("on")
+            else:
+                context.remove_class("on")
+
+    def _pane(self, name: str) -> Gtk.Widget:
+        pane = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        pane.get_style_context().add_class("pane")
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.add(pane)
+        getattr(self, f"_pane_{name.lower()}")(pane)
+        return scroller
+
+    def _head(self, pane: Gtk.Box, title: str, subtitle: str) -> None:
+        h1 = Gtk.Label(label=title)
+        h1.set_xalign(0)
+        pane.pack_start(h1, False, False, 0)
+        sub = Gtk.Label(label=subtitle)
+        sub.set_xalign(0)
+        sub.set_line_wrap(True)
+        sub.get_style_context().add_class("sub")
+        pane.pack_start(sub, False, False, 0)
+
+    def _pane_about(self, pane: Gtk.Box) -> None:
+        release = read_os_release()
+        state = read_state()
+        self._head(pane, "About this computer",
+                   "AmaaraOS is the operating system. Open-PC One is the machine it "
+                   "runs on. Both are built by The A-Tech Corporation.")
+        pane.pack_start(section("System"), False, False, 0)
+        pane.pack_start(row("Operating system", release.get("PRETTY_NAME", "AmaaraOS")), False, False, 0)
+        pane.pack_start(row("Vendor", release.get("VENDOR_NAME", "The A-Tech Corporation")), False, False, 0)
+        pane.pack_start(row("Device", release.get("AMAARAOS_DEVICE", "Open-PC One")), False, False, 0)
+        pane.pack_start(row("Channel", release.get("AMAARAOS_CHANNEL", "dev")), False, False, 0)
+        pane.pack_start(row("Kernel", os.uname().release), False, False, 0)
+        pane.pack_start(row("Base", f"{release.get('DISTRIB_ID', 'debian')} "
+                                    f"{release.get('DISTRIB_RELEASE', '')}".strip()), False, False, 0)
+        pane.pack_start(section("Identity"), False, False, 0)
+        pane.pack_start(row("Device ID", state.get("device_id", "—")), False, False, 0)
+        tier = state.get("license_tier") or ""
+        batch = state.get("license_batch") or ""
+        # Empty fields render as a bare separator if you concatenate them blindly.
+        licence = f"{tier} · {batch}" if tier or batch else "not activated"
+        pane.pack_start(row("License", licence), False, False, 0)
+        pane.pack_start(row("Setup", state.get("phase", "welcome")), False, False, 0)
+
+    def _pane_display(self, pane: Gtk.Box) -> None:
+        self._head(pane, "Display", "The framebuffer the agent sees and drives. "
+                                    "There is no monitor: the desktop is virtual.")
+        pane.pack_start(section("Screen"), False, False, 0)
+        pane.pack_start(row("Resolution", display_state()), False, False, 0)
+        pane.pack_start(row("Frame rate", "virtual display — not rate-limited"), False, False, 0)
+        pane.pack_start(note("Streaming (MJPEG, VNC) is served by the agent runtime, not "
+                             "by this pane. Resolution changes are an image setting so the "
+                             "agent's coordinates stay stable."), False, False, 14)
+
+    def _pane_network(self, pane: Gtk.Box) -> None:
+        self._head(pane, "Network", "Provisioned over Bluetooth on first boot, or wired "
+                                    "with no setup at all.")
+        pane.pack_start(section("Interfaces"), False, False, 0)
+        interfaces = link_state()
+        if not interfaces:
+            pane.pack_start(row("Interfaces", "none found"), False, False, 0)
+        for name, state in interfaces:
+            pane.pack_start(row(name, state), False, False, 0)
+        wifi = wifi_name()
+        if wifi:
+            pane.pack_start(section("Wi-Fi"), False, False, 0)
+            pane.pack_start(row("Active", wifi.replace("yes:", "").replace("no:", "— ")), False, False, 0)
+
+    def _pane_audio(self, pane: Gtk.Box) -> None:
+        self._head(pane, "Audio", "Speech in and out is the voice stack; this is the "
+                                  "plain output volume.")
+        pane.pack_start(section("Output"), False, False, 0)
+        pane.pack_start(row("Volume", volume() or "no device"), False, False, 0)
+        pane.pack_start(row("Muted", sink_state() or "unknown"), False, False, 0)
+        pane.pack_start(note("The voice stack (speech recognition and synthesis) is not "
+                             "part of this image yet; it has its own unit and its own "
+                             "container image."), False, False, 14)
+
+    def _pane_software(self, pane: Gtk.Box) -> None:
+        self._head(pane, "Software", "What setup installed, and what runs because of it.")
+        state = read_state()
+        installed = state.get("installed") or []
+        chosen = state.get("profiles") or []
+        pane.pack_start(section("Profiles"), False, False, 0)
+        if not chosen:
+            pane.pack_start(row("Installed", "nothing yet — setup has not run"), False, False, 0)
+        for profile in chosen:
+            pane.pack_start(row(profile, "installed" if profile in installed else "requested"), False, False, 0)
+        pane.pack_start(section("Agent runtime"), False, False, 0)
+        engine = engine_state()
+        pane.pack_start(row("openpc-engine", engine), False, False, 0)
+        pane.pack_start(row("Local model", local_model()), False, False, 0)
+
+    def _pane_agent(self, pane: Gtk.Box) -> None:
+        state = read_state()
+        self._head(pane, "Agent", "This computer exists so an agent can use it. These are "
+                                  "the three things that matter about that.")
+        pane.pack_start(section("Engine"), False, False, 0)
+        state_label = engine_state()
+        pane.pack_start(row("Service", state_label), False, False, 0)
+        pane.pack_start(row("Edge", "wss://…:8095 (paired devices only)"), False, False, 0)
+        pane.pack_start(row("Devices paired", "see openpc-engine devices list"), False, False, 0)
+        pane.pack_start(section("This device"), False, False, 0)
+        pane.pack_start(row("Device ID", state.get("device_id", "—")), False, False, 0)
+        pane.pack_start(row("Setup phase", state.get("phase", "welcome")), False, False, 0)
+        pane.pack_start(row("Model", local_model()), False, False, 0)
+
+    def _pane_updates(self, pane: Gtk.Box) -> None:
+        release = read_os_release()
+        self._head(pane, "Updates", "An update writes the whole root filesystem into the "
+                                    "inactive slot and boots it three times before it is "
+                                    "trusted.")
+        pane.pack_start(section("This image"), False, False, 0)
+        pane.pack_start(row("Version", release.get("VERSION", "—")), False, False, 0)
+        pane.pack_start(row("Active slot", active_slot()), False, False, 0)
+        pane.pack_start(section("How it lands"), False, False, 0)
+        pane.pack_start(row("Mechanism", "A/B root slots, boot-counted rollback"), False, False, 0)
+        pane.pack_start(row("Root filesystem", "read-only"), False, False, 0)
+        pane.pack_start(note("There is no update feed yet: an operator runs ota-update with "
+                             "a signed rootfs. A feed is the next piece of this pane, and it "
+                             "will not claim to exist before it does."), False, False, 14)
+
+
+def main() -> int:
+    settings = Settings()
+    settings.connect("destroy", Gtk.main_quit)
+    Gtk.main()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
