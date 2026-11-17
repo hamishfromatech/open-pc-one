@@ -136,3 +136,13 @@ property is locked).
 
 `os/tests/test_theme.py` now encodes all of it: every frame part in both focus
 states, every button state, the themerc keys, the lock attributes, and valid XML.
+
+### Known benign warning
+
+`xfce4-session` logs `Unable to launch "xfce4-panel"` once per boot. It is not a
+fault: we ship no panel (amaara-shell draws the bar and dock), and xfce4-session's
+own failsafe path starts a panel whenever it has to start a window manager itself.
+`/etc/xdg/xfce4/xfce4-session.rc` keeps our default session free of it, but the
+failsafe path is not configurable. Removing the line means starting xfwm4 before
+xfce4-session, which is a session-ordering change to verify on hardware rather
+than assert in a test.

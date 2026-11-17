@@ -78,6 +78,7 @@ COPY --chmod=0755 os/overlay/usr/local/bin/amaara-shell /usr/local/bin/amaara-sh
 COPY os/overlay/etc/xdg/gtk-3.0/settings.ini /etc/xdg/gtk-3.0/settings.ini
 COPY os/overlay/usr/share/amaara/icons /usr/share/amaara/icons
 COPY os/overlay/usr/share/themes/Amaara /usr/share/themes/Amaara
+COPY os/overlay/etc/xdg/xfce4/xfce4-session.rc /etc/xdg/xfce4/xfce4-session.rc
 COPY os/overlay/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
 COPY --chmod=0755 os/overlay/usr/local/bin/amaara-shell /usr/local/bin/amaara-shell
 COPY --chmod=0755 os/scripts/openpc-session /opt/openpc/bin/openpc-session

@@ -1,0 +1,21 @@
+# Default session for AmaaraOS.
+#
+# xfce4-session's built-in fallback starts xfce4-panel, which this image does not
+# install (amaara-shell draws the bar and dock instead). Without this file every
+# boot logs `Unable to launch "xfce4-panel": No such file or directory`, and a
+# cold-boot probe that looks for failures sees noise it cannot tell from a fault.
+#
+# The shell is started by openpc-session, not from here: the session script is
+# what decides between the setup kiosk and the desktop, and it needs the shell in
+# the same process group either way.
+[Sessions]
+ChooserButton=true
+[Default]
+Client0_Command=xfsettingsd
+Client0_PerScreen=False
+Client1_Command=xfwm4
+Client1_PerScreen=False
+Client2_Command=xfdesktop
+Client2_PerScreen=False
+[General]
+SessionName=AmaaraOS

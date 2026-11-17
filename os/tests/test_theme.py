@@ -92,3 +92,18 @@ def test_brand_properties_are_locked_for_everyone():
 def test_every_system_channel_file_is_valid_xml():
     for path in sorted(XFCONF.glob("*.xml")):
         ET.parse(path)  # raises on malformed XML, which xfconf would reject
+
+
+def test_the_default_session_does_not_list_a_panel_that_is_not_installed():
+    # Our default session names exactly the clients the image ships. NOTE: xfce4-session
+    # still tries xfce4-panel once per boot from its own failsafe path (it starts a WM
+    # when none is running, and takes the panel with it), so the boot log keeps one
+    # benign warning; silencing it means starting xfwm4 before xfce4-session, which
+    # changes session ordering and belongs on hardware, not in a unit test.
+    rc = OS / "overlay" / "etc" / "xdg" / "xfce4" / "xfce4-session.rc"
+    text = rc.read_text()
+    commands = [line.split("=", 1)[1] for line in text.splitlines()
+                if line.startswith("Client") and "_Command=" in line]
+    assert "xfce4-panel" not in commands
+    assert "xfwm4" in commands and "xfdesktop" in commands
+    assert "amaara-shell" not in commands, "the session script starts the shell, not this file"
