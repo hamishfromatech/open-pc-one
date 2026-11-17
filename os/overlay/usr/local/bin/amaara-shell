@@ -32,6 +32,7 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk  # noqa: E402
 
 CREAM = "rgba(249,244,238,0.94)"
+RED_DEEP = "#A8202A"
 CREAM_SOLID = "#F9F4EE"
 INK = "#0B0908"
 MUTED = "#6E6058"
@@ -136,14 +137,34 @@ window {{ background: transparent; }}
 .spot .result {{
   border-radius: 10px; padding: 9px 10px; color: {INK}; font-size: 13.5px;
 }}
-.spot .result.on {{ background: rgba(215,46,53,0.10); }}
-.spot row:selected, .spot .result:selected {{ background: rgba(215,46,53,0.14); }}
-.spot row:selected label {{ color: {INK}; }}
+.spot .result.on {{ background: rgba(215,46,53,0.14); }}
+.spot .result.on label {{ color: {INK}; }}
+.spot row {{ background: transparent; }}
+.spot row:selected {{ background: transparent; }}
 /* Same colour as the panel: with a compositor the rounded panel floats, and
    without one the window behind it is the same cream instead of black. */
 window {{ background: {CREAM_SOLID}; }}
 .spot .result .sub {{ color: {MUTED}; font-size: 11.5px; }}
 .spot .hint {{ color: {MUTED}; font-size: 11px; padding: 10px 6px 0 6px; }}
+.spot .action {{ background: transparent; border: 0; border-radius: 10px;
+  padding: 8px 10px; color: {INK}; font-size: 13px; }}
+.spot .action:hover {{ background: rgba(228,214,202,0.75); }}
+.spot .action:hover {{ background: rgba(228,214,202,0.75); }}
+.spot .action.danger {{ color: {RED_DEEP}; }}
+/* same panel, square corners: no compositor, no rim */
+.spot.flat {{ border-radius: 0; }}
+/* Lock screen: one field, one rule, one clock. Anything busier looks like a
+   screensaver instead of a lock. */
+.lock {{ background: {CREAM_SOLID}; }}
+.lock .kicker {{ color: {MUTED}; font-size: 11px; letter-spacing: 0.24em; }}
+.lock .wordmark {{ font-family: "DejaVu Serif", serif; font-weight: 700;
+  font-size: 74px; color: {INK}; }}
+.lock .tag {{ color: {RED}; font-family: "DejaVu Serif", serif; font-style: italic;
+  font-size: 26px; }}
+.lock .clock {{ font-family: "DejaVu Serif", serif; font-size: 96px; color: {INK}; }}
+.lock .date {{ color: {MUTED}; font-size: 15px; }}
+.lock .hint {{ color: {MUTED}; font-size: 12.5px; letter-spacing: 0.12em; }}
+.lock .device {{ color: {MUTED}; font-size: 11.5px; }}
 """
 
 
@@ -170,7 +191,9 @@ class Shell:
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
-        self.launcher = Launcher()
+        self.lock_screen = LockScreen(on_lock=self._cover_surfaces,
+                                      on_unlock=self._reveal_surfaces)
+        self.launcher = Launcher(self.lock_screen)
         self.bar = self._bar()
         self.dock = self._dock()
 
@@ -282,11 +305,23 @@ class Shell:
         self.dock.move(max(0, (screen_width() - width) // 2), screen_height() - height - 10)
         return False
 
+    # -- lock cover --------------------------------------------------------
+
+    def _cover_surfaces(self) -> None:
+        for surface in (self.bar, self.dock):
+            surface.hide()
+
+    def _reveal_surfaces(self) -> None:
+        for surface in (self.bar, self.dock):
+            surface.show_all()
+
     # -- live state --------------------------------------------------------
 
     def tick(self) -> bool:
         now = time.localtime()
         self.clock.set_text(time.strftime("%a %d %b  %H:%M", now))
+        # Keep the bar's own clock in step with a lock screen that was showing
+        # while the shell was busy.
         self.net.set_text("Ethernet" if os.path.exists("/sys/class/net/eth0") else "")
         level = _battery_percent()
         self.batt.set_text(f"{level}%" if level is not None else "")
@@ -352,6 +387,132 @@ def desktop_entries() -> list[tuple[str, str, list[str]]]:
     return found
 
 
+
+class LockScreen(Gtk.Window):
+    """The desktop covered: brand, clock, and one way back in.
+
+    There is no password on this appliance by design (the agent runs as this
+    user and the only remote access is the WSS edge), so this is a privacy cover
+    rather than an authentication prompt. It says so instead of pretending.
+    """
+
+    def __init__(self, device: str = "", on_lock=None, on_unlock=None) -> None:
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.on_lock = on_lock
+        self.on_unlock = on_unlock
+        self.set_decorated(False)
+        self.set_keep_above(True)
+        self.set_skip_taskbar_hint(True)
+        self.set_skip_pager_hint(True)
+        self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+        self.get_style_context().add_class("lock")
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_border_width(84)
+        box.set_margin_bottom(24)
+
+        kicker = Gtk.Label(label="THE A-TECH CORPORATION")
+        kicker.set_xalign(0)
+        kicker.get_style_context().add_class("kicker")
+        box.pack_start(kicker, False, False, 0)
+
+        self.clock = Gtk.Label(label="")
+        self.clock.set_xalign(0)
+        self.clock.get_style_context().add_class("clock")
+        box.pack_start(self.clock, False, False, 14)
+
+        self.date = Gtk.Label(label="")
+        self.date.set_xalign(0)
+        self.date.get_style_context().add_class("date")
+        box.pack_start(self.date, False, False, 0)
+
+        rule = Gtk.Box()
+        rule.get_style_context().add_class("rule")
+        rule.set_size_request(46, 6)
+        rule.set_margin_top(34)
+        box.pack_start(rule, False, False, 0)
+
+        word = Gtk.Label(label="AmaaraOS")
+        word.set_xalign(0)
+        word.get_style_context().add_class("wordmark")
+        word.set_margin_top(22)
+        box.pack_start(word, False, False, 0)
+
+        tag = Gtk.Label(label="the operating system for your own AI")
+        tag.set_xalign(0)
+        tag.get_style_context().add_class("tag")
+        box.pack_start(tag, False, False, 0)
+
+        box.pack_start(Gtk.Box(), True, True, 0)
+
+        hint = Gtk.Label(label="PRESS ENTER OR CLICK TO UNLOCK")
+        hint.set_xalign(0)
+        hint.get_style_context().add_class("hint")
+        box.pack_start(hint, False, False, 0)
+
+        self.device_label = Gtk.Label(label=device)
+        self.device_label.set_xalign(0)
+        self.device_label.get_style_context().add_class("device")
+        self.device_label.set_margin_top(6)
+        box.pack_start(self.device_label, False, False, 0)
+
+        self.add(box)
+        self.connect("key-press-event", self._on_key)
+        self.connect("button-press-event", self._on_key)
+        self.tick()
+
+    def _on_key(self, *_args) -> bool:
+        self.unlock()
+        return True
+
+    def tick(self) -> bool:
+        now = time.localtime()
+        self.clock.set_text(time.strftime("%H:%M", now))
+        self.date.set_text(time.strftime("%A %d %B", now))
+        return True
+
+    def lock(self) -> None:
+        if self.on_lock is not None:
+            self.on_lock()
+        self.show_all()
+        # The bar and the dock are keep-above too, so "on top" is decided by X
+        # stacking order: raise again once the window is mapped, or the cover
+        # comes up *behind* the shell it is supposed to hide.
+        self.present()
+        GLib.timeout_add(120, self._raise)
+        GLib.timeout_add_seconds(10, self.tick)
+
+    def _raise(self) -> bool:
+        # fullscreen() before mapping is advisory; ask again once the window
+        # exists, and keep asking while the cover is up.
+        self.fullscreen()
+        window = self.get_window()
+        if window is not None:
+            window.raise_()
+        return self.get_visible()
+
+    def unlock(self) -> None:
+        self.hide()
+        if self.on_unlock is not None:
+            self.on_unlock()
+
+
+def system_power(action: str) -> None:
+    """Restart or power off, if this session is allowed to.
+
+    On the appliance these need a polkit rule for the openpc user; until that
+    exists the call fails and says so in the journal rather than lying to the UI.
+    """
+    if shutil.which("systemctl") is None:
+        print(f"amaara-shell: systemctl is not present; cannot {action}", file=sys.stderr)
+        return
+    try:
+        subprocess.Popen(["systemctl", action], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
+    except OSError as exc:  # pragma: no cover - environment dependent
+        print(f"amaara-shell: cannot {action}: {exc}", file=sys.stderr)
+
+
 class Launcher(Gtk.Window):
     """A search overlay: type, arrow, Enter.
 
@@ -359,8 +520,9 @@ class Launcher(Gtk.Window):
     that is installed, which is what a person expects from a desktop's own mark.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, lock_screen: LockScreen) -> None:
         super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.lock_screen = lock_screen
         self.set_decorated(False)
         self.set_skip_taskbar_hint(True)
         self.set_skip_pager_hint(True)
@@ -370,11 +532,18 @@ class Launcher(Gtk.Window):
         self.set_app_paintable(True)
         screen = self.get_screen()
         visual = screen.get_rgba_visual()
-        if visual is not None and screen.is_composited():
+        composited = visual is not None and screen.is_composited()
+        if composited:
             self.set_visual(visual)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        # ALWAYS "spot": every rule below is written as a descendant of it, so
+        # swapping the class instead of adding one silently unstyles the panel
+        # (that is how the selection colour went missing). "flat" only drops the
+        # radius, for a session with no compositor to hide the rim behind.
         outer.get_style_context().add_class("spot")
+        if not composited:
+            outer.get_style_context().add_class("flat")
 
         self.entry = Gtk.Entry()
         self.entry.set_placeholder_text("Search apps and system…")
@@ -386,13 +555,35 @@ class Launcher(Gtk.Window):
         outer.pack_start(self.head, False, False, 0)
 
         self.list = Gtk.ListBox()
-        self.list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        # No selection mode: the row highlight is ours, so the theme's accent
+        # cannot come back, and there is no half-selected state to explain.
+        self.list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.list.set_activate_on_single_click(True)
         scroller = Gtk.ScrolledWindow()
         scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_max_content_height(340)
+        # A multiple of the row height, so the list never ends mid-row.
+        scroller.set_max_content_height(41 * 9)
         scroller.set_propagate_natural_height(True)
         scroller.add(self.list)
         outer.pack_start(scroller, True, True, 0)
+
+        # System actions live outside the scroller: a long app list must never
+        # push "Power off" below the fold.
+        self.footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        self.footer.set_margin_top(8)
+        for label, action in (("Lock screen", "lock"), ("Restart", "reboot"),
+                              ("Power off", "poweroff")):
+            button = Gtk.Button()
+            button.set_relief(Gtk.ReliefStyle.NONE)
+            button.get_style_context().add_class("action")
+            if action != "lock":
+                button.get_style_context().add_class("danger")
+            text = Gtk.Label(label=label)
+            text.set_xalign(0)
+            button.add(text)
+            button.connect("clicked", lambda _b, a=action: self._system(a))
+            self.footer.pack_start(button, False, False, 0)
+        outer.pack_start(self.footer, False, False, 0)
 
         hint = Gtk.Label(label="Up/Down choose      Enter open      Esc close")
         hint.set_xalign(0)
@@ -403,10 +594,13 @@ class Launcher(Gtk.Window):
         self.entries = desktop_entries()
         self.results: list[tuple[str, list[str]]] = []
 
+
         self.entry.connect("changed", self._filter)
         self.entry.connect("activate", self._open_selected)
         self.connect("key-press-event", self._on_key)
         self.list.connect("row-activated", self._on_row)
+        self.entry.connect("key-press-event", self._on_entry_key)
+        self.current = 0
         self._filter()
 
     # -- behaviour ---------------------------------------------------------
@@ -437,9 +631,48 @@ class Launcher(Gtk.Window):
             if len(self.results) >= 60:
                 break
         self.head.set_text(f"Applications · {len(self.results)}" if needle else "Applications")
-        first = self.list.get_row_at_index(0)
-        if first is not None:
-            self.list.select_row(first)
+        self.current = 0
+        self._paint_selection()
+
+    def _paint_selection(self) -> None:
+        rows = self.list.get_children()
+        for index, child in enumerate(rows):
+            if index == self.current:
+                child.get_style_context().add_class("on")
+            else:
+                child.get_style_context().remove_class("on")
+
+    def _move(self, delta: int) -> None:
+        rows = len(self.list.get_children())
+        if not rows:
+            return
+        self.current = max(0, min(rows - 1, self.current + delta))
+        self._paint_selection()
+        self.list.get_children()[self.current].grab_focus()
+
+    def _on_entry_key(self, _widget, event) -> bool:
+        if event.keyval == Gdk.KEY_Down:
+            self._move(1)
+            return True
+        if event.keyval == Gdk.KEY_Up:
+            self._move(-1)
+            return True
+        if event.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            self._open_index(self.current)
+            return True
+        if event.keyval == Gdk.KEY_Escape:
+            self.hide()
+            return True
+        return False
+
+    def _open_index(self, index: int) -> None:
+        if 0 <= index < len(self.results):
+            argv = self.results[index][1]
+            self.hide()
+            if argv[0].startswith("amaara:"):
+                self._system(argv[0].split(":", 1)[1])
+            else:
+                launch(argv)
 
     def _on_key(self, _widget, event) -> bool:
         if event.keyval == Gdk.KEY_Escape:
@@ -448,10 +681,14 @@ class Launcher(Gtk.Window):
         return False
 
     def _on_row(self, _list, row) -> None:
-        index = row.get_index()
-        if 0 <= index < len(self.results):
-            self.hide()
-            launch(self.results[index][1])
+        self._open_index(row.get_index())
+
+    def _system(self, action: str) -> None:
+        self.hide()
+        if action == "lock":
+            self.lock_screen.lock()
+        else:
+            system_power(action)
 
     def _open_selected(self, *_args) -> None:
         row = self.list.get_selected_row()
@@ -467,7 +704,7 @@ class Launcher(Gtk.Window):
         self._filter()
         self.show_all()
         width = 620
-        self.resize(width, min(520, screen_height() - 160))
+        self.resize(width, min(560, screen_height() - 160))
         self.move((screen_width() - width) // 2, max(60, screen_height() // 6))
         self.present()
         self.entry.grab_focus()
@@ -531,7 +768,21 @@ def _focused_window() -> str:
         return ""
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if "--lock" in argv:
+        # Lock on its own, without a shell: what the autostart hook uses so the
+        # cover is up before the desktop is, and what a test can drive.
+        Gtk.init([])
+        provider = css()
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        screen = LockScreen()
+        screen.lock()
+        Gtk.main()
+        return 0
+
     shell = Shell()
     GLib.timeout_add_seconds(5, shell.tick)
     shell.tick()

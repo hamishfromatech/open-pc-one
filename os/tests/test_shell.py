@@ -79,3 +79,15 @@ def test_the_stylesheet_only_uses_properties_gtk_understands():
                  "justify-content", "align-items: center;}")  # last one is a typo guard
     for prop in forbidden:
         assert prop not in css.group(1), f"{prop} is not valid GTK CSS"
+
+
+def test_the_lock_cover_owns_the_whole_screen():
+    source = SHELL.read_text()
+    # A lock screen with the bar and dock on top of it is a decorated desktop,
+    # not a locked one: the shell hides its own surfaces while the cover is up.
+    assert "class LockScreen" in source
+    assert "_cover_surfaces" in source and "_reveal_surfaces" in source
+    assert "surface.hide()" in source
+    assert "PRESS ENTER" in source.upper()
+    # and it must never be able to swallow the session: no grab, no modal loop
+    assert "Gtk.main()" in source  # one loop only, shared with the shell

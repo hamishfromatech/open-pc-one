@@ -102,7 +102,7 @@ desktop that moves when you did not move it is a toy.
 | Top bar + dock (`amaara-shell`) | built |
 | Wallpaper, GTK defaults, icon theme | built |
 | Window chrome (xfwm4 titlebars) | Adwaita default — **needs a branded xfwm4 theme** |
-| Lock / login screen | **missing** — a real OS has one even with no password |
+| Lock screen (`amaara-shell`) | built — full-screen cover; no password by design, and it says so |
 | Settings app | **missing** — `xfce4-settings-manager` is a placeholder, not our UI |
 | Notification centre, OSD for volume/brightness | **missing** |
 | App launcher / search (`amaara-shell`) | built — click the wordmark; reads real `.desktop` entries |
