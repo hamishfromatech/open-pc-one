@@ -1,0 +1,62 @@
+# The appliance desktop, as a container, so it can be *seen* in a browser.
+#
+# The shipped appliance has no monitor and no VNC: it runs os/scripts/openpc-session
+# (Xvfb :0 + XFCE + Chromium) under systemd and the agent drives it through
+# cua-driver/AT-SPI. For development that is invisible. This image runs the same
+# session script from the same Debian trixie package set and adds the two things
+# that only exist here: x11vnc on the Xvfb display, and noVNC over websockify.
+#
+# Debian trixie, not a slim base: the point is that the desktop on screen is the
+# one the image bakes, with the same window manager and browser.
+FROM debian:trixie
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    DISPLAY=:0 \
+    HOME=/home/openpc \
+    OPENPC_RUN_DIR=/run/openpc \
+    OPENPC_SCREEN=1920x1080x24 \
+    # Chromium's setuid sandbox binary is not usable for a non-root user inside a
+    # container, so the wrapper below adds --no-sandbox. Container-only.
+    OPENPC_CHROME=/usr/local/bin/chromium-container
+
+# The packages mirror the image's session stack in os/image/mkosi.conf; x11vnc,
+# novnc and websockify are the dev-only additions for browser access.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        xvfb \
+        x11-utils \
+        x11-xserver-utils \
+        xfce4-session \
+        xfwm4 \
+        dbus-x11 \
+        chromium \
+        at-spi2-core \
+        fonts-dejavu-core \
+        fonts-liberation2 \
+        x11vnc \
+        novnc \
+        websockify \
+        procps \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# The session user. The appliance's openpc user has no shell and no password; so
+# does this one — the container is entered through exec, not a login.
+RUN useradd --create-home --home-dir /home/openpc --shell /usr/sbin/nologin openpc \
+    && mkdir -p /home/openpc/Desktop /home/openpc/Documents /opt/openpc/bin /run/openpc \
+    && chown -R openpc:openpc /home/openpc /run/openpc
+
+COPY --chmod=0755 os/scripts/openpc-session /opt/openpc/bin/openpc-session
+COPY --chmod=0755 dev/chromium-container /usr/local/bin/chromium-container
+COPY --chmod=0755 dev/desktop-entrypoint.sh /usr/local/bin/desktop-entrypoint.sh
+
+USER openpc
+WORKDIR /home/openpc
+
+# 6080 noVNC (open this), 5900 raw VNC, 9222 Chromium DevTools (CDP).
+EXPOSE 6080 5900 9222
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=6 \
+    CMD curl -fsS http://127.0.0.1:6080/vnc.html >/dev/null || exit 1
+
+ENTRYPOINT ["/usr/local/bin/desktop-entrypoint.sh"]

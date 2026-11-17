@@ -1,0 +1,9 @@
+#!/bin/sh
+# Container-only Chromium wrapper.
+#
+# os/scripts/openpc-session launches $OPENPC_CHROME and expects it to behave like
+# the appliance's browser. On the appliance Chromium runs as the unprivileged
+# openpc user on a real system with its setuid sandbox helper; inside a container
+# that helper cannot be used, so the sandbox is disabled *here only*. Nothing in
+# this file ships in the image.
+exec /usr/bin/chromium --no-sandbox "$@"

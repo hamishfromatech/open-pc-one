@@ -13,6 +13,7 @@ help:
 	@echo "make check-public  fail if internal commercial material is in the tree"
 	@echo "make docker-test   build the dev image and run the suite inside it"
 	@echo "make docker-run    engine :8095 (fake child) + MJPEG stand-in :8090"
+	@echo "make docker-desktop the appliance desktop (XFCE+Chromium) at http://localhost:6081/vnc.html"
 	@echo "make run-fake      run the WSS edge against the fake engine natively"
 	@echo "make doctor        handshake against the real a-coder-cli on this machine"
 	@echo "make wheels        build the three service wheels into os/image/wheels"
@@ -81,6 +82,12 @@ docker-test: docker-build
 
 docker-run:
 	docker compose -f docker-compose.dev.yml up --build
+
+docker-desktop:
+	docker compose -f docker-compose.dev.yml up -d --build desktop
+	@echo "open http://localhost:6081/vnc.html  (the appliance desktop, noVNC)"
+	@echo "CDP (what the agent drives): docker compose -f docker-compose.dev.yml exec desktop \
+	  curl -s localhost:9222/json/list"
 
 docker-down:
 	docker compose -f docker-compose.dev.yml down --volumes

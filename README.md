@@ -35,6 +35,38 @@ rather than trusting a public CA. `make docker-run` additionally serves a
 generated MJPEG stream on `http://localhost:8090` (`/healthz`, `/v1/mjpeg`) as a
 stand-in for the real desktop.
 
+### See the desktop
+
+The appliance has no monitor, so the quickest way to look at what the agent sees
+is the dev desktop container: the same `os/scripts/openpc-session` (Xvfb :0 +
+XFCE + Chromium) built from the same Debian trixie packages as the image, with
+`x11vnc` and noVNC in front of it.
+
+```bash
+make docker-desktop     # then open http://localhost:6081/vnc.html
+```
+
+Two things exist only in that container: the VNC/noVNC layer (the appliance has
+none, because it has no display to look at) and a `--no-sandbox` Chromium wrapper
+(the setuid sandbox cannot be used by a non-root user in a container). Chromium's
+DevTools stay on `127.0.0.1:9222` inside the container:
+
+```bash
+docker compose -f docker-compose.dev.yml exec desktop curl -s localhost:9222/json/list
+```
+
+### Prove the edge actually serves
+
+`dev/live_smoke.py` drives a *running* bridge over the real wire - TLS pin,
+host_challenge, a one-time pairing code, Ed25519 reauth, subscribe/replay and a
+full prompt turn - and prints one PASS/FAIL line per check:
+
+```bash
+CODE=$(docker compose -f docker-compose.dev.yml exec -T engine   python -m openpc_engine --state-dir /state pair-code   | python -c 'import json,sys;print(json.load(sys.stdin)["code"])')
+docker cp dev/live_smoke.py open-pc-one-dev-engine-1:/tmp/
+docker compose -f docker-compose.dev.yml exec -T engine python /tmp/live_smoke.py "$CODE"
+```
+
 ### What to expect on `wss://localhost:8095`
 
 The socket speaks the frame protocol in

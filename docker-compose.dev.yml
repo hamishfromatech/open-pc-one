@@ -44,5 +44,24 @@ services:
       timeout: 3s
       retries: 6
 
+
+  # The appliance desktop (Xvfb :0 + XFCE + Chromium, from os/scripts/openpc-session)
+  # with noVNC in front, so a human can look at what the agent sees.
+  # No authentication and no appliance equivalent: published on localhost only.
+  desktop:
+    build:
+      context: .
+      dockerfile: dev/Dockerfile.desktop
+    image: open-pc-one-desktop
+    ports:
+      - "127.0.0.1:6081:6080"
+    shm_size: 512m
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:6080/vnc.html"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
 volumes:
   openpc-state:
+
