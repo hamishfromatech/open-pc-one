@@ -1,0 +1,18 @@
+NAME="AmaaraOS"
+PRETTY_NAME="AmaaraOS 1.0.0"
+VERSION="1.0.0"
+VERSION_ID="1.0"
+VERSION_CODENAME="amar"
+ID=amaaraos
+ID_LIKE="debian"
+ANSI_COLOR="1;31"
+VENDOR_NAME="The A-Tech Corporation"
+# The distribution underneath is Debian trixie and stays that way: it is what
+# carries the security updates. These two fields say so out loud instead of
+# hiding it, which is what a branded appliance should do.
+DISTRIB_ID="debian"
+DISTRIB_RELEASE="trixie"
+# Vendor fields are namespaced with the ID; AMAARAOS_* is invisible to tools
+# that do not know about it and obvious to us.
+AMAARAOS_DEVICE="Open-PC One"
+AMAARAOS_CHANNEL="pilot"

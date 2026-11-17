@@ -1,5 +1,5 @@
 [Unit]
-Description=Mark the Open-PC One A/B slot as good after a successful boot
+Description=Mark the AmaaraOS A/B slot as good after a successful boot
 Documentation=https://github.com/hamishfromatech/open-pc-one
 # systemd-boot boot counting: an update entry is installed as
 # `openpc+b+3.conf`. Each failed boot decrements the counter; at 0 the entry is

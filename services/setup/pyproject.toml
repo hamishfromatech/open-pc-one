@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "amaara-setup"
+version = "1.0.0"
+description = "AmaaraOS first-boot setup: license keys, install profiles, local UI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "The A-Tech Corporation PTY LTD" }]
+# Pinned exactly, like the engine: an unattended appliance must not receive an
+# unpinned update. cryptography is already in the image for the engine.
+dependencies = [
+    "cryptography==44.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[project.scripts]
+amaara-setup = "amaara_setup.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/amaara_setup"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

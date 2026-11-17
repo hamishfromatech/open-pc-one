@@ -60,7 +60,7 @@ doctor:
 
 wheels:
 	rm -rf $(WHEELHOUSE) && mkdir -p $(WHEELHOUSE)
-	$(PIP) wheel --no-deps -w $(WHEELHOUSE) ./services/engine ./services/provisioning ./services/led
+	$(PIP) wheel --no-deps -w $(WHEELHOUSE) ./services/engine ./services/provisioning ./services/led ./services/setup
 	# The three wheels above carry no dependencies; the image installs with
 	# --no-index, so the runtime dependencies must be in the wheelhouse too.
 	# They are resolved for the target, not for this host: the image runs

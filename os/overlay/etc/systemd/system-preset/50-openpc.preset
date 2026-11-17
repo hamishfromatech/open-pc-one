@@ -7,3 +7,4 @@
 # container exists, but it must stay off today - otherwise every boot carries a
 # permanently failed unit and the CI probe reports an unhealthy box.
 disable openpc-speech.service
+enable amaara-setup.service

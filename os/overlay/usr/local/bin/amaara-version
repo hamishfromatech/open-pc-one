@@ -1,0 +1,33 @@
+#!/bin/sh
+# One screen that answers "what is this box running?" for support and for the
+# release notes. Everything is read from the running system, never from a file
+# that could drift: os-release, /proc/cmdline (A/B slot), the model manifest and
+# the kernel.
+set -eu
+
+. /etc/os-release
+
+# The slot is authoritative in the kernel command line; systemd-boot writes it.
+slot="unknown"
+case "$(cat /proc/cmdline 2>/dev/null)" in
+  *openpc.slot=a*) slot="a (active)" ;;
+  *openpc.slot=b*) slot="b (active)" ;;
+esac
+
+model="${AMAARAOS_DEVICE:-unknown}"
+if [ -r /etc/openpc/models.json ]; then
+  # The manifest is the only place a model is named (ENGINE.md §4). jq is in the
+  # image for exactly this kind of one-liner; fall back to the raw name.
+  active="$(jq -r '.models[.active] // empty | "\(.displayName // .repoId // "unknown")"' \
+            /etc/openpc/models.json 2>/dev/null || true)"
+  [ -n "${active:-}" ] && model="$model, local model: $active"
+fi
+
+printf '%s %s\n' "${PRETTY_NAME:-AmaaraOS}" "${AMAARAOS_CHANNEL:+($AMAARAOS_CHANNEL)}"
+printf '  vendor      %s\n' "${VENDOR_NAME:-The A-Tech Corporation}"
+printf '  device      %s\n' "${AMAARAOS_DEVICE:-unknown}"
+printf '  base        %s %s\n' "${DISTRIB_ID:-debian}" "${DISTRIB_RELEASE:-}"
+printf '  root slot   %s\n' "$slot"
+printf '  kernel      %s\n' "$(uname -r)"
+printf '  model       %s\n' "$model"
+printf '  engine      %s\n' "$(openpc-engine --version 2>/dev/null || echo 'not installed')"

@@ -1,0 +1,42 @@
+[Unit]
+Description=AmaaraOS first-boot setup (license key and install profiles)
+Documentation=https://github.com/hamishfromatech/open-pc-one/blob/main/os/BRAND.md
+# The desktop has to know whether setup is finished before it decides between the
+# kiosk and the agent's desktop, so this starts first and the session orders after
+# it. It serves loopback only; it is not reachable from the network.
+After=network-online.target
+Wants=network-online.target
+Before=openpc-session.service
+
+[Service]
+Type=simple
+User=openpc
+Group=openpc
+Environment=HOME=/home/openpc
+# The state file is the handoff between the factory and the customer; it is the
+# only thing this unit writes.
+StateDirectory=amaara/setup
+StateDirectoryMode=0700
+ExecStart=/opt/openpc/venv/bin/amaara-setup \
+    --state-dir /var/lib/amaara/setup serve \
+    --bind 127.0.0.1:8099 \
+    --license-manifest /etc/amaara/license.json \
+    --license-pubkey /etc/amaara/license.pub
+Restart=on-failure
+RestartSec=2
+# This unit never needs to power the box off on its own; the operator does, from
+# the screen. Keeping the capability out of the service is one less thing that can
+# reboot a customer's machine.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/amaara
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=openpc.target

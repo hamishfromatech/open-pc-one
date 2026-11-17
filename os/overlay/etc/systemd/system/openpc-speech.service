@@ -1,5 +1,5 @@
 [Unit]
-Description=Open-PC One speech container (Zipformer ASR + phonon-31m-en TTS)
+Description=AmaaraOS speech container (Zipformer ASR + phonon-31m-en TTS)
 After=llama.service docker.service
 Wants=llama.service
 Requires=docker.service

@@ -80,7 +80,12 @@ CHECKS: tuple[tuple[re.Pattern[str], str], ...] = (
     (_rule("A", r"\$"), "retail price"),
     (_rule("US", r"\$"), "landed cost"),
     (_rule(r"\b", "FO", "B", r"\b", ignore_case=True), "supplier price term"),
-    (_rule(r"\b", "mar", "gin", ignore_case=True), "commercial gross-profit figure"),
+    # Only a figure or a percentage in prose: 'margin 60%', 'gross margin was 60'.
+    # A CSS declaration always has '-' or ':' first (margin-top:, margin:), and a
+    # variable is margin_x, which never reaches the word boundary. Without those
+    # exclusions the guard fails on every line of a stylesheet.
+    (_rule(r"\b", "mar", "gin", r"\b(?!\s*[-:])[^\n]{0,12}(\d|%)", ignore_case=True),
+     "commercial gross-profit figure"),
     (_rule(r"\b", "MO", "Q", r"\b", ignore_case=True), "supplier price term"),
 )
 

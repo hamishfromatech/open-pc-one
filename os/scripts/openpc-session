@@ -74,6 +74,15 @@ for _ in $(seq 1 100); do
   sleep 0.1
 done
 
+# The shell is the desktop's face: a top bar and a dock, in place of xfce4-panel
+# (which this image does not install). If it fails, the session still works - the
+# windows are what matter - so a missing GDK does not take the desktop with it.
+if [ -x /usr/local/bin/amaara-shell ]; then
+  amaara-shell &
+  SHELL_PID=$!
+  log "amaara-shell started (pid $SHELL_PID)"
+fi
+
 CHROME_BIN="${OPENPC_CHROME:-chromium}"
 CHROME_ARGS=(
   --no-first-run
@@ -89,6 +98,34 @@ CHROME_ARGS=(
   --window-size=1920,1080
   --start-maximized
 )
+
+# Setup owns the screen until the customer has entered a license and chosen what
+# to install. Two conditions, both cheap, before the kiosk is used: the setup
+# service answers, and the state says it is not finished. A missing service must
+# not leave a blank screen where a working desktop should be.
+SETUP_URL="${AMAARA_SETUP_URL:-http://127.0.0.1:8099}"
+SETUP_STATE="${AMAARA_SETUP_STATE:-/var/lib/amaara/setup/state.json}"
+setup_phase() {
+  sed -n 's/.*"phase": *"\([a-z]*\)".*/\1/p' "$SETUP_STATE" 2>/dev/null | head -n 1
+}
+if command -v curl >/dev/null 2>&1    && curl -fsS --max-time 15 "$SETUP_URL/healthz" >/dev/null 2>&1    && [ "$(setup_phase)" != "complete" ]; then
+  log "setup is not complete; showing the setup screen at $SETUP_URL"
+  CHROME_ARGS+=( --kiosk "$SETUP_URL/" )
+  # The kiosk cannot watch itself. When setup finishes, killing the browser makes
+  # this script exit non-zero, systemd restarts the unit, and the second start
+  # sees phase=complete and opens the agent's desktop. That keeps the whole
+  # handover inside this unit, with no systemctl call from a sandboxed service.
+  (
+    while kill -0 "$CHROME_PID" 2>/dev/null; do
+      if [ "$(setup_phase)" = "complete" ]; then
+        log "setup complete; handing the screen to the desktop"
+        kill "$CHROME_PID" 2>/dev/null || true
+        exit 0
+      fi
+      sleep 5
+    done
+  ) &
+fi
 
 log "starting $CHROME_BIN"
 "$CHROME_BIN" "${CHROME_ARGS[@]}" &

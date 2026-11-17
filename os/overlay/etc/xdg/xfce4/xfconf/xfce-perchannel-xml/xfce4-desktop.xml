@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  System-wide XFCE defaults (xfconf reads $XDG_CONFIG_DIRS, which includes
+  /etc/xdg). The appliance has one user and no settings UI, so a user-level
+  ~/.config file would never be written: this is where the desktop identity has
+  to live.
+
+  image-style 5 = zoomed, which keeps the 16:9 composition while covering any
+  panel geometry. rgba1 is the cream field, so a monitor that fails to load the
+  PNG still comes up in brand colour instead of black.
+-->
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+      <property name="monitor0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="color-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="5"/>
+          <property name="image-show" type="int" value="1"/>
+          <property name="image-path" type="string" value="/usr/share/backgrounds/amaaraos/amaaraos-1920x1080.png"/>
+          <property name="rgba1" type="array">
+            <value type="double" value="0.976"/>
+            <value type="double" value="0.957"/>
+            <value type="double" value="0.933"/>
+            <value type="double" value="1.000"/>
+          </property>
+        </property>
+      </property>
+    </property>
+  </property>
+  <property name="desktop-icons" type="empty">
+    <property name="style" type="int" value="1"/>
+    <property name="file-icons" type="empty">
+      <property name="show-home" type="bool" value="false"/>
+      <property name="show-filesystem" type="bool" value="false"/>
+      <property name="show-removable" type="bool" value="false"/>
+      <property name="show-trash" type="bool" value="false"/>
+    </property>
+  </property>
+</channel>

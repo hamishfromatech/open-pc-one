@@ -1,0 +1,5 @@
+    # A figure or a percentage next to the word: that is how a gross figure is
+    # written, and bare 'margin' is also a CSS property and a layout variable,
+    # which made the guard unusable on real UI code.
+    (_rule(r"\b", "mar", "gin", r"\b[^\n]{0,10}(\d|%)", ignore_case=True),
+     "commercial gross-profit figure"),

@@ -1,5 +1,5 @@
 [Unit]
-Description=Open-PC One local LLM (llama.cpp; model and context come from /etc/openpc/models.json)
+Description=AmaaraOS local LLM (llama.cpp; model and context come from /etc/openpc/models.json)
 Documentation=https://github.com/hamishfromatech/open-pc-one
 After=openpc-session.service
 Wants=openpc-session.service

@@ -20,18 +20,32 @@ ENV DEBIAN_FRONTEND=noninteractive \
     OPENPC_CHROME=/usr/local/bin/chromium-container
 
 # The packages mirror the image's session stack in os/image/mkosi.conf; x11vnc,
-# novnc and websockify are the dev-only additions for browser access.
+# novnc and websockify are the dev-only additions for browser access. The rest
+# is the image's branded surface: xfdesktop paints the wallpaper and
+# amaara-shell draws the bar and dock (there is no xfce4-panel to fall back on).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         xvfb \
         x11-utils \
         x11-xserver-utils \
         xfce4-session \
         xfwm4 \
+        # The branded session needs a panel and something to paint the
+        # wallpaper: without xfdesktop the backdrop is plain black.
+        xfdesktop4 \
+        xdotool \
+        thunar \
+        xfce4-terminal \
+        xfce4-settings \
+        python3-gi \
+        gir1.2-gtk-3.0 \
+        fonts-inter \
+        papirus-icon-theme \
         dbus-x11 \
         chromium \
         at-spi2-core \
         fonts-dejavu-core \
         fonts-liberation2 \
+        librsvg2-common \
         x11vnc \
         novnc \
         websockify \
@@ -44,8 +58,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # does this one — the container is entered through exec, not a login.
 RUN useradd --create-home --home-dir /home/openpc --shell /usr/sbin/nologin openpc \
     && mkdir -p /home/openpc/Desktop /home/openpc/Documents /opt/openpc/bin /run/openpc \
-    && chown -R openpc:openpc /home/openpc /run/openpc
+    && mkdir -p /var/lib/amaara/setup /etc/amaara \n    && chown -R openpc:openpc /home/openpc /run/openpc /var/lib/amaara /etc/amaara
 
+# The same identity the image ships, so `cat /etc/os-release` and the desktop
+# here look like the appliance rather than like Debian.
+COPY os/overlay/etc/os-release /etc/os-release
+COPY --chmod=0755 os/overlay/usr/local/bin/amaara-version /usr/local/bin/amaara-version
+COPY os/overlay/usr/share/backgrounds/amaaraos/amaaraos-1920x1080.png \
+     /usr/share/backgrounds/amaaraos/amaaraos-1920x1080.png
+COPY os/overlay/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml \
+     /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml
+
+# The setup service, straight from the repository. Debian's python3-cryptography
+# stands in for the pinned wheel: this is the preview, not the appliance.
+COPY services/setup/src /opt/amaara-setup/src
+ENV PYTHONPATH=/opt/amaara-setup/src
+
+COPY --chmod=0755 os/overlay/usr/local/bin/amaara-shell /usr/local/bin/amaara-shell
+COPY os/overlay/etc/xdg/gtk-3.0/settings.ini /etc/xdg/gtk-3.0/settings.ini
+COPY os/overlay/usr/share/amaara/icons /usr/share/amaara/icons
+COPY os/overlay/usr/share/themes/Amaara /usr/share/themes/Amaara
+COPY os/overlay/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xfwm4.xml
+COPY --chmod=0755 os/overlay/usr/local/bin/amaara-shell /usr/local/bin/amaara-shell
 COPY --chmod=0755 os/scripts/openpc-session /opt/openpc/bin/openpc-session
 COPY --chmod=0755 dev/chromium-container /usr/local/bin/chromium-container
 COPY --chmod=0755 dev/desktop-entrypoint.sh /usr/local/bin/desktop-entrypoint.sh

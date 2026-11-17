@@ -8,6 +8,6 @@ Requires=openpc-led.service
 # openpc-speech is deliberately absent until the speech container image exists.
 # It Requires=docker.service, and docker is not part of the v0.1 image; pulling
 # it in would only add a permanently failed unit to every boot.
-Wants=multi-user.target openpc-provision.service openpc-session.service llama.service cua-driver.service openpc-engine.service
+Wants=multi-user.target amaara-setup.service openpc-provision.service openpc-session.service llama.service cua-driver.service openpc-engine.service
 After=multi-user.target
 AllowIsolate=yes

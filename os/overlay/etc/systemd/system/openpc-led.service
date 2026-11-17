@@ -1,5 +1,5 @@
 [Unit]
-Description=Open-PC One status LED (the only local UI)
+Description=AmaaraOS status LED (the only local UI)
 Documentation=https://github.com/hamishfromatech/open-pc-one
 # Start as early as possible: a box that boots to a dark power button looks
 # dead. The service tolerates every other unit being absent.

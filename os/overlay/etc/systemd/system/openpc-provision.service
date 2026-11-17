@@ -1,5 +1,5 @@
 [Unit]
-Description=Open-PC One BLE WiFi provisioning (first boot, no keyboard)
+Description=AmaaraOS BLE WiFi provisioning (first boot, no keyboard)
 Documentation=https://github.com/hamishfromatech/open-pc-one
 After=bluetooth.target network.target
 Wants=bluetooth.target

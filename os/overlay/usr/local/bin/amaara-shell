@@ -1,0 +1,327 @@
+#!/usr/bin/env python3
+"""amaara-shell — the AmaaraOS desktop shell: a top bar and a dock.
+
+XFCE gives us window management (xfwm4) and nothing else we want to show. This
+replaces the panel with the two surfaces a person actually reads:
+
+  top bar   wordmark, the focused app, status, the clock
+  dock      the apps that matter on this box, with running indicators
+
+It is deliberately one small GTK3 process with no configuration format: the
+shell is part of the OS, not something a user is expected to theme. Colours come
+from the same tokens as the wallpaper and the setup screen.
+
+Nothing here needs a compositor to *work*; with one it gets the translucency and
+the rounded dock, without one it falls back to flat cream.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, GdkPixbuf, GLib, Gtk  # noqa: E402
+
+CREAM = "rgba(249,244,238,0.94)"
+CREAM_SOLID = "#F9F4EE"
+INK = "#0B0908"
+MUTED = "#6E6058"
+RED = "#D72E35"
+HAIR = "rgba(228,214,202,0.9)"
+
+ICON_DIR = "/usr/share/amaara/icons"
+
+#: id, our icon file, theme names to fall back to, label, argv.
+#: The icons are ours on purpose: a dock that inherits whatever icon theme the
+#: distribution ships is how an "OS" ends up looking like a Linux screensaver.
+APPS = [
+    ("browser", "browser.svg", ("chromium", "web-browser"),
+     "Browser", ["chromium", "--no-first-run", "--no-default-browser-check"]),
+    ("files", "files.svg", ("Thunar", "system-file-manager", "folder"),
+     "Files", ["thunar"]),
+    ("terminal", "terminal.svg", ("xfce4-terminal", "utilities-terminal"),
+     "Terminal", ["xfce4-terminal"]),
+    ("settings", "settings.svg", ("preferences-system", "xfce-settings"),
+     "Settings", ["xfce4-settings-manager"]),
+]
+
+
+def icon_widget(icon_file: str, theme_names: tuple[str, ...]) -> Gtk.Image:
+    """Our icon if it is installed, the theme's if not, never a blank square."""
+    path = os.path.join(ICON_DIR, icon_file)
+    if os.path.exists(path):
+        try:
+            return Gtk.Image.new_from_pixbuf(
+                GdkPixbuf.Pixbuf.new_from_file_at_scale(path, 44, 44, True)
+            )
+        except GLib.Error as exc:  # pragma: no cover - broken asset
+            print(f"amaara-shell: {path}: {exc}", file=sys.stderr)
+    return Gtk.Image.new_from_icon_name(resolve_icon(theme_names), Gtk.IconSize.DIALOG)
+
+
+def resolve_icon(names: tuple[str, ...]) -> str:
+    """First icon name an installed theme has, else a neutral fallback.
+
+    The default theme is whatever GTK resolved at start-up, which on this image
+    can still be Adwaita (no app icons); the dock must look the same either way,
+    so the brand theme is named explicitly and the default is only the last try.
+    """
+    candidates = []
+    for theme_name in ("Papirus", "Papirus-Dark"):
+        theme = Gtk.IconTheme.new()
+        theme.set_search_path(_icon_paths())
+        theme.set_custom_theme(theme_name)
+        candidates.append(theme)
+    candidates.append(Gtk.IconTheme.get_default())
+    for theme in candidates:
+        for name in names:
+            if theme.has_icon(name):
+                return name
+    return "application-x-executable"
+
+
+def _icon_paths() -> list[str]:
+    default = Gtk.IconTheme.get_default()
+    paths = list(default.get_search_path()) if default is not None else []
+    for guess in ("/usr/share/icons", "/usr/local/share/icons"):
+        if guess not in paths and os.path.isdir(guess):
+            paths.append(guess)
+    return paths
+
+BAR_CSS = f"""
+* {{ font-family: "Inter", "DejaVu Sans", sans-serif; }}
+window {{ background: transparent; }}
+.bar {{
+  background: {CREAM}; color: {INK};
+  border-bottom: 1px solid {HAIR};
+  padding: 0 14px;
+}}
+.wordmark {{ font-family: "DejaVu Serif", serif; font-weight: 700; font-size: 13px; letter-spacing: -0.2px; }}
+.rule {{ background: {RED}; min-width: 22px; min-height: 4px; }}
+.app {{ color: {MUTED}; font-size: 12px; }}
+.status {{ color: {MUTED}; font-size: 12px; }}
+.clock {{ color: {INK}; font-size: 12.5px; font-weight: 600; }}
+.dot {{ background: {RED}; border-radius: 4px; min-width: 7px; min-height: 7px; }}
+.dock {{
+  background: {CREAM}; border: 1px solid {HAIR}; border-radius: 20px; padding: 8px 12px;
+}}
+.dock button {{
+  background: transparent; border: 0; border-radius: 16px; padding: 8px 10px 5px 10px;
+  transition: background 120ms ease;
+}}
+.dock button:hover {{ background: rgba(228,214,202,0.75); }}
+.dock .running {{ background: {RED}; border-radius: 2px; min-width: 4px; min-height: 4px; }}
+.label {{ color: {MUTED}; font-size: 10.5px; }}
+"""
+
+
+def css() -> Gtk.CssProvider:
+    provider = Gtk.CssProvider()
+    provider.load_from_data(BAR_CSS.encode())
+    return provider
+
+
+def launch(argv: list[str]) -> None:
+    binary = shutil.which(argv[0])
+    if binary is None:
+        return
+    try:
+        subprocess.Popen([binary, *argv[1:]], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:  # pragma: no cover - environment dependent
+        print(f"amaara-shell: cannot launch {argv[0]}: {exc}", file=sys.stderr)
+
+
+class Shell:
+    def __init__(self) -> None:
+        provider = css()
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+        self.bar = self._bar()
+        self.dock = self._dock()
+
+    # -- windows -----------------------------------------------------------
+
+    @staticmethod
+    def _surface() -> Gtk.Window:
+        window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        window.set_decorated(False)
+        window.set_resizable(False)
+        window.set_skip_taskbar_hint(True)
+        window.set_skip_pager_hint(True)
+        window.set_keep_above(True)
+        window.set_accept_focus(False)
+        window.set_type_hint(Gdk.WindowTypeHint.DOCK)
+        window.set_app_paintable(True)
+        screen = window.get_screen()
+        visual = screen.get_rgba_visual()
+        if visual is not None and screen.is_composited():
+            window.set_visual(visual)
+        return window
+
+    def _bar(self) -> Gtk.Window:
+        window = self._surface()
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        box.get_style_context().add_class("bar")
+
+        self.rule = Gtk.Box()
+        self.rule.get_style_context().add_class("rule")
+        self.rule.set_valign(Gtk.Align.CENTER)
+        word = Gtk.Label(label="AmaaraOS")
+        word.get_style_context().add_class("wordmark")
+
+        self.app_label = Gtk.Label(label="")
+        self.app_label.get_style_context().add_class("app")
+        self.app_label.set_ellipsize(3)  # Pango ellipsize middle
+
+        left = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        left.pack_start(self.rule, False, False, 0)
+        left.pack_start(word, False, False, 0)
+        left.pack_start(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL), False, False, 6)
+        left.pack_start(self.app_label, False, False, 0)
+
+        right = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        self.net = Gtk.Label(label="")
+        self.vol = Gtk.Label(label="")
+        self.batt = Gtk.Label(label="")
+        for widget in (self.net, self.vol, self.batt):
+            widget.get_style_context().add_class("status")
+            right.pack_start(widget, False, False, 0)
+        dot = Gtk.Box()
+        dot.get_style_context().add_class("dot")
+        dot.set_valign(Gtk.Align.CENTER)
+        right.pack_start(dot, False, False, 4)
+        self.clock = Gtk.Label(label="")
+        self.clock.get_style_context().add_class("clock")
+        right.pack_end(self.clock, False, False, 0)
+
+        box.pack_start(left, False, False, 0)
+        box.pack_end(right, False, False, 0)
+        window.add(box)
+
+        width = screen_width()
+        window.set_default_size(width, 30)
+        window.resize(width, 30)
+        window.move(0, 0)
+        window.show_all()
+        return window
+
+    def _dock(self) -> Gtk.Window:
+        window = self._surface()
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        outer.get_style_context().add_class("dock")
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        for _id, icon_file, icon_names, label, argv in APPS:
+            button = Gtk.Button()
+            button.set_relief(Gtk.ReliefStyle.NONE)
+            inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            image = icon_widget(icon_file, icon_names)
+            inner.pack_start(image, False, False, 0)
+            caption = Gtk.Label(label=label)
+            caption.get_style_context().add_class("label")
+            inner.pack_start(caption, False, False, 0)
+            button.add(inner)
+            button.set_tooltip_text(label)
+            button.connect("clicked", lambda _b, a=argv: launch(a))
+            row.pack_start(button, False, False, 0)
+
+        outer.pack_start(row, False, False, 0)
+        window.add(outer)
+        window.show_all()
+
+        # Centre it after GTK knows how wide it is.
+        GLib.idle_add(self._place_dock)
+        return window
+
+    def _place_dock(self) -> bool:
+        width, height = self.dock.get_size()
+        self.dock.move(max(0, (screen_width() - width) // 2), screen_height() - height - 10)
+        return False
+
+    # -- live state --------------------------------------------------------
+
+    def tick(self) -> bool:
+        now = time.localtime()
+        self.clock.set_text(time.strftime("%a %d %b  %H:%M", now))
+        self.net.set_text("Ethernet" if os.path.exists("/sys/class/net/eth0") else "")
+        level = _battery_percent()
+        self.batt.set_text(f"{level}%" if level is not None else "")
+        self.vol.set_text(_volume())
+        self.app_label.set_text(_focused_window())
+        self._place_dock()
+        return True
+
+
+def screen_width() -> int:
+    return Gdk.Display.get_default().get_primary_monitor().get_geometry().width
+
+
+def screen_height() -> int:
+    return Gdk.Display.get_default().get_primary_monitor().get_geometry().height
+
+
+def _read(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def _battery_percent() -> int | None:
+    for entry in ("BAT0", "BAT1"):
+        value = _read(f"/sys/class/power_supply/{entry}/capacity")
+        if value.isdigit():
+            return int(value)
+    return None
+
+
+def _volume() -> str:
+    """PulseAudio/PipeWire volume, if there is any. Silence is not a crash."""
+    if shutil.which("pactl") is None:
+        return ""
+    try:
+        out = subprocess.run(["pactl", "get-sink-volume", "@DEFAULT_SINK@"],
+                             capture_output=True, text=True, timeout=2).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    for token in out.replace("%", " ").split():
+        if token.isdigit():
+            return f"{token}%"
+    return ""
+
+
+def _focused_window() -> str:
+    """Name of the focused app, for the bar. Best effort: no X tool, no name."""
+    if shutil.which("xdotool") is None:
+        return ""
+    try:
+        window = subprocess.run(["xdotool", "getactivewindow"], capture_output=True,
+                                text=True, timeout=2).stdout.strip()
+        if not window:
+            return ""
+        return subprocess.run(["xdotool", "getwindowname", window], capture_output=True,
+                              text=True, timeout=2).stdout.strip()[:60]
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def main() -> int:
+    shell = Shell()
+    GLib.timeout_add_seconds(5, shell.tick)
+    shell.tick()
+    Gtk.main()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

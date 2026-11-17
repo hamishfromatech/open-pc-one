@@ -55,6 +55,7 @@ services:
     image: open-pc-one-desktop
     ports:
       - "127.0.0.1:6081:6080"
+      - "127.0.0.1:8099:8099"
     shm_size: 512m
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:6080/vnc.html"]

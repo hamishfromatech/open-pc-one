@@ -21,6 +21,33 @@ say() { printf 'postinst: %s\n' "$*"; }
 die() { printf 'postinst: ERROR: %s\n' "$*" >&2; exit 1; }
 
 # --------------------------------------------------------------------------
+# Identity. mkosi writes the distribution's own /etc/os-release while it sets the
+# image up, which would undo the overlay copy; the branded file is installed last
+# so `cat /etc/os-release` is the OS we ship and not Debian's.
+# --------------------------------------------------------------------------
+install -m 0644 "$REPO/os/overlay/etc/os-release" "$BUILDROOT/etc/os-release"
+install -m 0644 "$REPO/os/overlay/etc/issue" "$BUILDROOT/etc/issue"
+install -d "$BUILDROOT/usr/share/backgrounds/amaaraos"
+install -m 0644 "$REPO/os/overlay/usr/share/backgrounds/amaaraos/amaaraos-1920x1080.png"   "$BUILDROOT/usr/share/backgrounds/amaaraos/amaaraos-1920x1080.png"
+install -m 0755 "$REPO/os/overlay/usr/local/bin/amaara-version" "$BUILDROOT/usr/local/bin/amaara-version"
+install -d "$BUILDROOT/usr/share/amaara/icons"
+install -m 0644 "$REPO"/os/overlay/usr/share/amaara/icons/*.svg "$BUILDROOT/usr/share/amaara/icons/"
+install -m 0755 "$REPO/os/overlay/usr/local/bin/amaara-shell" "$BUILDROOT/usr/local/bin/amaara-shell"
+install -d "$BUILDROOT/usr/share/themes/Amaara/xfwm4"
+install -m 0644 "$REPO"/os/overlay/usr/share/themes/Amaara/xfwm4/* "$BUILDROOT/usr/share/themes/Amaara/xfwm4/"
+# The license public key and the per-batch manifest are build inputs, not
+# secrets: the key only verifies, and the manifest only lists key hashes.
+# Neither is in the repository - a pilot image without them still boots and
+# setup says so instead of failing obscurely.
+install -d -m 0755 "$BUILDROOT/etc/amaara"
+if [ -f "$REPO/os/image/amaara/license.pub" ]; then
+  install -m 0644 "$REPO/os/image/amaara/license.pub" "$BUILDROOT/etc/amaara/license.pub"
+fi
+if [ -f "$REPO/os/image/amaara/license.json" ]; then
+  install -m 0644 "$REPO/os/image/amaara/license.json" "$BUILDROOT/etc/amaara/license.json"
+fi
+
+# --------------------------------------------------------------------------
 # The agent's user. No shell, no password, no SSH: the only way in is the
 # engine's WSS edge with a paired device key.
 # --------------------------------------------------------------------------
@@ -96,7 +123,7 @@ in_image /usr/bin/python3 -m venv /opt/openpc/venv
 # every boot and BLE provisioning cannot run at all.
 in_image env HOME=/root PIP_NO_CACHE_DIR=1 /opt/openpc/venv/bin/pip install --no-index \
   --find-links "$WHEELHOUSE" \
-  openpc-engine "openpc-provisioning[ble]" openpc-led \
+  openpc-engine "openpc-provisioning[ble]" openpc-led amaara-setup \
   || die "wheelhouse install failed; run 'make wheels' on the build host first"
 rm -rf "$BUILDROOT$WHEELHOUSE"
 

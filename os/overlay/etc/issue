@@ -1,0 +1,13 @@
+
+   AmaaraOS 1.0.0  ·  Open-PC One
+   The A-Tech Corporation
+
+   There is no login on this device. The desktop is driven by the agent,
+   and the only ways in are the WSS edge on :8095 (a paired device key)
+   and, on first boot, BLE provisioning.
+
+   openpc-engine doctor      identity, engine handshake, registered devices
+   openpc-engine pair-code   one-time code for a desktop client
+   amaara-version            OS, slot, model and kernel in one screen
+   journalctl -u openpc-engine -f
+

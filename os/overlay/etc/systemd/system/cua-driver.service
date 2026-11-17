@@ -1,5 +1,5 @@
 [Unit]
-Description=Open-PC One cua-driver (semantic desktop control, unix socket)
+Description=AmaaraOS cua-driver (semantic desktop control, unix socket)
 After=openpc-session.service openpc-speech.service
 Wants=openpc-session.service
 Before=openpc-engine.service

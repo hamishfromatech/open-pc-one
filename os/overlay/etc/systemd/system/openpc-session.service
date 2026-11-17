@@ -1,5 +1,5 @@
 [Unit]
-Description=Open-PC One desktop session (Xvfb + XFCE + Chrome)
+Description=AmaaraOS desktop session (Xvfb + XFCE + Chrome)
 Documentation=https://github.com/hamishfromatech/open-pc-one
 # A cold boot must have a routable link before the session starts: the agent
 # drives Chrome, and Chrome blocks forever on a captive portal with no DNS.

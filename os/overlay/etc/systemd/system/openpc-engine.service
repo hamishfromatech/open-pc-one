@@ -1,5 +1,5 @@
 [Unit]
-Description=Open-PC One engine bridge (a-coder-cli RPC <-> WSS :8095)
+Description=AmaaraOS engine bridge (a-coder-cli RPC <-> WSS :8095)
 Documentation=https://github.com/hamishfromatech/open-pc-one
 # Order is the contract: session -> llama -> speech -> cua-driver -> engine.
 # llama is last-but-one so get_available_models is truthful on first connect.
