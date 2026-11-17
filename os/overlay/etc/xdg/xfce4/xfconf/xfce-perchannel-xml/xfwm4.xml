@@ -6,10 +6,13 @@
 -->
 <channel name="xfwm4" version="1.0">
   <property name="general" type="empty">
-    <property name="theme" type="string" value="Amaara"/>
-    <property name="title_font" type="string" value="Inter 10.5"/>
+    <!-- Locked for every user: the window chrome is the OS, not a preference.
+         locked takes a user list and "*" means everyone (unlocked defaults to
+         "*"); locking is only honoured in system files like this one. -->
+    <property name="theme" type="string" value="Amaara" locked="*"/>
+    <property name="title_font" type="string" value="Inter 10.5" locked="*"/>
     <property name="title_alignment" type="string" value="center"/>
-    <property name="button_layout" type="string" value="CHM|"/>
+    <property name="button_layout" type="string" value="CHM|" locked="*"/>
     <property name="double_click_action" type="string" value="maximize"/>
     <!-- Compositing gives the dock its translucency and the windows their
          shadows; without it the desktop looks flat and cheap. -->

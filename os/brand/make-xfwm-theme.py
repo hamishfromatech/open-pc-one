@@ -55,7 +55,9 @@ title_vertical_offset_inactive=1
 button_offset=6
 button_spacing=6
 # All three controls on the left, in the order the desktop world reads them:
-# close, minimise, maximise. The pipe is the split between the two titlebar sides.
+# C = close, H = hide (minimise), M = maximise; '|' splits left from right.
+# (Upstream's options table prints H = shade, but the stock layout O|HMC has a
+# minimise button and no shade button, so H is hide and S is stick.)
 button_layout=CHM|
 full_width_title=true
 title_alignment=center
@@ -134,6 +136,9 @@ def build(out: Path) -> None:
         rounded_top(24, TITLE_HEIGHT, fill, right=True).save(out / f"top-right-{state}.png")
         flat(4, 24, fill, "left").save(out / f"left-{state}.png")
         flat(4, 24, fill, "right").save(out / f"right-{state}.png")
+        # SIDE_TOP is a frame part in its own right (titleless and undecorated
+        # windows use it), so it exists even though the titlebar covers it.
+        flat(30, 6, fill, "bottom").save(out / f"top-{state}.png")
         flat(6, 6, fill).save(out / f"bottom-{state}.png")
         flat(8, 8, fill).save(out / f"bottom-left-{state}.png")
         flat(8, 8, fill).save(out / f"bottom-right-{state}.png")

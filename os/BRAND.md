@@ -107,3 +107,32 @@ desktop that moves when you did not move it is a toy.
 | Notification centre, OSD for volume/brightness | **missing** |
 | App launcher / search (Spotlight-equivalent) | **missing** — the dock is static |
 | Window snapping + workspace gesture | xfwm4 defaults only |
+
+## Verified against upstream, not assumed
+
+Checked with Context7 against the xfwm4 and xfconf upstream documentation. Three
+things changed as a result:
+
+1. **`top-active.png` / `top-inactive.png` were missing.** `SIDE_TOP` is a frame
+   part in its own right (titleless and undecorated windows use it), not just the
+   titlebar's top edge. xfwm4 fails silently when a part is absent and falls back
+   to the previous theme, which looks like "my theme did not apply".
+2. **The brand properties are now locked.** xfconf only honours `locked` in
+   *system* files, and the attribute takes a user list where `*` means everyone
+   (`unlocked` defaults to `*`). `<property name="theme" locked="*"/>` in
+   `/etc/xdg/...` is what makes the window chrome and the wallpaper the OS rather
+   than a preference a customer can break.
+3. **The window-controls mapping is H = hide, S = stick.** Upstream's options
+   table prints `H` = shade, but the stock layout `O|HMC` shows a minimise button
+   and no shade button, so `CHM|` is close / minimise / maximise as intended.
+
+Confirmed as-is: `themerc` keys (`button_offset`, `button_spacing`,
+`full_width_title`, `maximized_offset`, `title_alignment`, `title_shadow_*`,
+`title_vertical_offset_*`, `shadow_*`), the `<part>-<state>.png` naming, the four
+button states (`active`, `inactive`, `prelight`, `pressed`), and that
+`$XDG_CONFIG_DIRS/xfce4/xfconf/xfce-perchannel-xml/<channel>.xml` is the correct
+place for system defaults (system files merge first, the user file wins unless the
+property is locked).
+
+`os/tests/test_theme.py` now encodes all of it: every frame part in both focus
+states, every button state, the themerc keys, the lock attributes, and valid XML.

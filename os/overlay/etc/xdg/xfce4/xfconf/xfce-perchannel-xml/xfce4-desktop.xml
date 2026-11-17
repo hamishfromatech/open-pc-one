@@ -17,7 +17,9 @@
           <property name="color-style" type="int" value="0"/>
           <property name="image-style" type="int" value="5"/>
           <property name="image-show" type="int" value="1"/>
-          <property name="image-path" type="string" value="/usr/share/backgrounds/amaaraos/amaaraos-1920x1080.png"/>
+          <!-- Locked: the wallpaper is the brand, and a customer changing it
+               would leave the box looking like a hobby project. -->
+          <property name="image-path" type="string" value="/usr/share/backgrounds/amaaraos/amaaraos-1920x1080.png" locked="*"/>
           <property name="rgba1" type="array">
             <value type="double" value="0.976"/>
             <value type="double" value="0.957"/>

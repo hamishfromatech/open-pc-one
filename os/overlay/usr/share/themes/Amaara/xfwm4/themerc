@@ -11,7 +11,9 @@ title_vertical_offset_inactive=1
 button_offset=6
 button_spacing=6
 # All three controls on the left, in the order the desktop world reads them:
-# close, minimise, maximise. The pipe is the split between the two titlebar sides.
+# C = close, H = hide (minimise), M = maximise; '|' splits left from right.
+# (Upstream's options table prints H = shade, but the stock layout O|HMC has a
+# minimise button and no shade button, so H is hide and S is stick.)
 button_layout=CHM|
 full_width_title=true
 title_alignment=center
