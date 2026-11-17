@@ -8,3 +8,4 @@
 # permanently failed unit and the CI probe reports an unhealthy box.
 disable openpc-speech.service
 enable amaara-setup.service
+enable amaara-update.timer

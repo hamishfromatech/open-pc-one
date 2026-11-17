@@ -1,0 +1,26 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "amaara-update"
+version = "1.0.0"
+description = "AmaaraOS update client: signed feed, A/B slots, fail-closed"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "The A-Tech Corporation PTY LTD" }]
+dependencies = ["cryptography==44.0.0"]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4"]
+
+[project.scripts]
+amaara-update = "amaara_update.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/amaara_update"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

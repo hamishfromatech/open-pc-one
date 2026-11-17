@@ -1,0 +1,32 @@
+[Unit]
+Description=AmaaraOS update check (signed feed, A/B slots)
+Documentation=https://github.com/hamishfromatech/open-pc-one/blob/main/os/BRAND.md
+# Checking needs a route out; nothing else on the box waits for it.
+After=network-online.target
+Wants=network-online.target
+# A check must never overlap a running one.
+ConditionPathExists=/etc/amaara/update.conf
+
+[Service]
+Type=oneshot
+User=openpc
+Group=openpc
+Environment=HOME=/home/openpc
+# AUTO_APPLY in /etc/amaara/update.conf decides whether this writes a slot. With
+# no it only checks, and the result lands in /var/lib/amaara/update/last-check.json
+# where Settings reads it.
+ExecStart=/bin/sh -c 'if grep -qE "^AUTO_APPLY=(yes|true|1)" /etc/amaara/update.conf; then exec /opt/openpc/venv/bin/amaara-update apply; else exec /opt/openpc/venv/bin/amaara-update check; fi'
+StateDirectory=amaara/update
+StateDirectoryMode=0700
+# Writing a slot needs the disk; verifying the feed needs nothing else.
+ReadWritePaths=/var/lib/amaara
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=openpc.target

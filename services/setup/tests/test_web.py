@@ -18,8 +18,8 @@ from http.cookiejar import CookieJar
 import pytest
 from amaara_setup.license import key_hash  # noqa: E402
 from amaara_setup.web import SetupApp, make_server
-from helpers import issued as make_issued
-from helpers import signing_keys as make_keys
+from setup_testkit import issued as make_issued
+from setup_testkit import signing_keys as make_keys
 
 
 @pytest.fixture

@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import stat
 
-import helpers  # noqa: F401  (puts src/ on sys.path)
 import pytest
+import setup_testkit as helpers  # noqa: F401  (puts src/ on sys.path)
 from amaara_setup.state import SetupState, StateError
 
 

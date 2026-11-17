@@ -387,9 +387,42 @@ class Settings(Gtk.Window):
         pane.pack_start(section("How it lands"), False, False, 0)
         pane.pack_start(row("Mechanism", "A/B root slots, boot-counted rollback"), False, False, 0)
         pane.pack_start(row("Root filesystem", "read-only"), False, False, 0)
-        pane.pack_start(note("There is no update feed yet: an operator runs ota-update with "
-                             "a signed rootfs. A feed is the next piece of this pane, and it "
-                             "will not claim to exist before it does."), False, False, 14)
+        self.update_result = Gtk.Label(label="")
+        self.update_result.set_xalign(0)
+        self.update_result.set_line_wrap(True)
+        self.update_result.set_max_width_chars(60)
+        self.update_result.get_style_context().add_class("sub")
+        pane.pack_start(self.update_result, False, False, 10)
+
+        check = Gtk.Button(label="Check for updates")
+        check.get_style_context().add_class("action")
+        check.connect("clicked", self._check_updates)
+        pane.pack_start(check, False, False, 0)
+        self._show_last_check()
+
+    def _show_last_check(self) -> None:
+        try:
+            last = json.loads((STATE_FILE.parent.parent / "update" / "last-check.json").read_text())
+        except (OSError, ValueError):
+            self.update_result.set_text("Never checked on this device.")
+            return
+        self.update_result.set_text(
+            f"Last check {last.get('checkedAt', '?')} — {last.get('status', '?')}"
+            + (f" (feed offers {last['version']})" if last.get("version") else "")
+        )
+
+    def _check_updates(self, *_args) -> None:
+        """Run the real client and print its answer, failures included."""
+        self.update_result.set_text("Checking…")
+        while Gtk.events_pending():
+            Gtk.main_iteration()
+        binary = shutil.which("amaara-update") or "/opt/openpc/venv/bin/amaara-update"
+        try:
+            done = subprocess.run([binary, "check"], capture_output=True, text=True, timeout=90)
+            message = (done.stdout or "").strip() or (done.stderr or "").strip()
+            self.update_result.set_text(f"{message}  (exit {done.returncode})")
+        except (OSError, subprocess.SubprocessError) as exc:
+            self.update_result.set_text(f"Cannot run the updater: {exc}")
 
 
 def main() -> int:

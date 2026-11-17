@@ -22,8 +22,8 @@ from amaara_setup.license import (
     redeem,
     verify_manifest,
 )
-from helpers import issued as make_issued  # noqa: E402
-from helpers import signing_keys as make_keys
+from setup_testkit import issued as make_issued  # noqa: E402
+from setup_testkit import signing_keys as make_keys
 
 
 def test_a_key_is_five_groups_of_five_and_survives_being_retyped():

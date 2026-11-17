@@ -195,3 +195,16 @@ start position and its settled position. **Not verified in the container**: the
 opacity fades, because there is no compositor to apply them (the appliance has
 one), and the keyboard tiling shortcuts, because a kiosk browser session has no
 keyboard to press them with.
+
+### The update feed
+
+`amaara-update` (service `amaara-update`, daily `amaara-update.timer`) reads a
+signed manifest, compares versions, downloads the image hashing as it writes, and
+hands it to `ota-update`, which writes the **inactive** slot and arms
+systemd-boot's three-try counter. It refuses: no `FEED_URL`, no public key, a bad
+signature, another channel, a hash that does not match, a short download, or a
+root that is not AmaaraOS — Debian's `VERSION="12 (bookworm)"` would otherwise
+compare as 12 and beat every release, leaving the box permanently "up to date".
+
+`AUTO_APPLY=no` by default: the timer checks, a person applies. A box that rewrites
+a root slot unattended needs a support team behind it first.

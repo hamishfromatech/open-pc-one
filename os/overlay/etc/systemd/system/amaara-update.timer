@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily AmaaraOS update check
+Documentation=https://github.com/hamishfromatech/open-pc-one/blob/main/os/BRAND.md
+
+[Timer]
+# Daily, with a little jitter so a fleet does not hit the feed at the same second.
+OnCalendar=daily
+RandomizedDelaySec=1800
+# A box that was off for a day checks once on the next boot, not once per missed day.
+Persistent=true
+Unit=amaara-update.service
+
+[Install]
+WantedBy=timers.target

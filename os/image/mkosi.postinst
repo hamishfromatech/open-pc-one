@@ -47,6 +47,10 @@ fi
 if [ -f "$REPO/os/image/amaara/license.json" ]; then
   install -m 0644 "$REPO/os/image/amaara/license.json" "$BUILDROOT/etc/amaara/license.json"
 fi
+# The update feed key. Without it every check refuses, which is the point.
+if [ -f "$REPO/os/image/amaara/update.pub" ]; then
+  install -m 0644 "$REPO/os/image/amaara/update.pub" "$BUILDROOT/etc/amaara/update.pub"
+fi
 
 # --------------------------------------------------------------------------
 # The agent's user. No shell, no password, no SSH: the only way in is the
@@ -124,7 +128,7 @@ in_image /usr/bin/python3 -m venv /opt/openpc/venv
 # every boot and BLE provisioning cannot run at all.
 in_image env HOME=/root PIP_NO_CACHE_DIR=1 /opt/openpc/venv/bin/pip install --no-index \
   --find-links "$WHEELHOUSE" \
-  openpc-engine "openpc-provisioning[ble]" openpc-led amaara-setup \
+  openpc-engine "openpc-provisioning[ble]" openpc-led amaara-setup amaara-update \
   || die "wheelhouse install failed; run 'make wheels' on the build host first"
 rm -rf "$BUILDROOT$WHEELHOUSE"
 
