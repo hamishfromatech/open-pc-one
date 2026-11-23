@@ -110,6 +110,13 @@ dev/                     development-only helpers (MJPEG stand-in)
 scripts/                 repository checks
 ```
 
+## Join the community
+
+Building with local AI? Join the **Open Source AI Builders Club** - courses, builds
+and support for people running open models on their own hardware:
+[skool.com/open-source-ai-builders-club](https://www.skool.com/open-source-ai-builders-club/about)
+
+
 ## Licence
 
 MIT. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE), which also records the
