@@ -199,3 +199,30 @@ console only to read the log.
 Harmless messages on the pilot boot: Chromium's GPU process exits under TCG
 (software rendering), and Xvfb logs the usual X11 socket noise. Neither affects
 the appliance units.
+
+## 7. Installation path (pilot)
+
+The end-to-end pilot installation path is documented in
+[os/INSTALL.md](INSTALL.md). It covers flashing the verified raw image to
+NVMe/USB, first boot, BLE provisioning with no keyboard and no monitor,
+discovery and verification, pairing mobile and desktop clients, reinstall, and
+recovery from a second independent boot medium.
+
+### 7.1 Installation checklist
+
+- [ ] Clean clone and downloaded pilot image acquired; raw and zstd sha256 verified.
+- [ ] Boot medium flashed with the verified raw image.
+- [ ] Second independent boot medium flashed and labelled.
+- [ ] Appliance powered with no keyboard and no monitor attached.
+- [ ] Boot reached the `openpc.target` line within the expected time.
+- [ ] WiFi provisioned over BLE, or Ethernet connected on first boot.
+- [ ] Appliance discovered as `openpc.local`; WSS on port 8095 reachable.
+- [ ] TLS fingerprint from device-info matched the engine fingerprint.
+- [ ] `openpc-led`, `openpc-session`, `llama`, `cua-driver`, and
+      `openpc-engine` active; `systemctl --failed` empty.
+- [ ] At least one `.gguf` present under `/var/lib/openpc/models`.
+- [ ] `/run/openpc/chrome` mounted as tmpfs.
+- [ ] Mobile client registered and connected over WSS.
+- [ ] Desktop pairing code minted, redeemed, and burned.
+- [ ] Recovery shell procedure verified at least once on spare media.
+- [ ] Debug SSH key removed; recovery medium stored separately.
